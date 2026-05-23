@@ -338,8 +338,8 @@ async function emailDraft() {
     const data = await res.json();
     if (!res.ok || data.ok === false) throw new Error(data.error || 'Email draft failed');
     const links = [];
-    if (data.excel?.downloadUrl) links.push(`<a href="${data.excel.downloadUrl}">Download Excel</a>`);
-    if (data.pdf?.downloadUrl) links.push(`<a href="${data.pdf.downloadUrl}">Download PDF</a>`);
+    if (data.excel?.shareUrl || data.excel?.downloadUrl) links.push(`<a href="${data.excel.shareUrl || data.excel.downloadUrl}" target="_blank" rel="noopener">Excel link</a>`);
+    if (data.pdf?.shareUrl || data.pdf?.downloadUrl) links.push(`<a href="${data.pdf.shareUrl || data.pdf.downloadUrl}" target="_blank" rel="noopener">PDF link</a>`);
     showTransient((data.message || 'Email draft created.') + (links.length ? ' ' + links.join(' | ') : ''));
     if (data.emailUrl || data.mailto) window.location.href = data.emailUrl || data.mailto;
   } catch (e) {

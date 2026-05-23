@@ -27,7 +27,7 @@ from datetime import datetime
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, quote, urlencode
 
 from calendar_engine import calculate_schedule
 from export_excel import create_workbook
@@ -56,6 +56,43 @@ def _safe_filename(name: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in name)
     safe = "_".join(safe.split())
     return safe[:80] or "Producer_Calendar"
+
+
+def _base_url(environ: dict[str, Any]) -> str:
+    """Return the public origin URL for links included in email drafts."""
+    proto = (environ.get("HTTP_X_FORWARDED_PROTO") or environ.get("wsgi.url_scheme") or "https").split(",")[0].strip()
+    host = (environ.get("HTTP_X_FORWARDED_HOST") or environ.get("HTTP_HOST") or "").split(",")[0].strip()
+    if not host:
+        host = "localhost"
+    return f"{proto}://{host}"
+
+
+def _share_token(filename: str, expires: int) -> str:
+    raw = f"{filename}|{expires}"
+    sig = hmac.new(SECRET_KEY.encode("utf-8"), raw.encode("utf-8"), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{raw}|{sig}".encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _verify_share_token(filename: str, token: str) -> bool:
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        token_filename, expires_s, sig = raw.rsplit("|", 2)
+        if not hmac.compare_digest(token_filename, filename):
+            return False
+        expires = int(expires_s)
+        if expires < int(time.time()):
+            return False
+        expected = hmac.new(SECRET_KEY.encode("utf-8"), f"{token_filename}|{expires}".encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected)
+    except Exception:
+        return False
+
+
+def _make_share_url(environ: dict[str, Any], filename: str, days: int = 7) -> str:
+    expires = int(time.time()) + max(1, days) * 24 * 60 * 60
+    token = _share_token(filename, expires)
+    return f"{_base_url(environ)}/share/{quote(filename)}?token={quote(token)}"
 
 
 def _json_bytes(payload: Any) -> bytes:
@@ -349,12 +386,19 @@ def _serve_export(start_response: Callable, path: str):
 
 
 def _build_email_url(provider: str, subject: str, body: str) -> str:
+    """Build a compose URL.
+
+    Use percent-encoding instead of plus-space encoding so iOS/Outlook clients do
+    not display literal + characters in the subject or message body. Browser
+    compose links cannot attach local files; links are included in the body.
+    """
     provider = (provider or "system").lower()
+    params = {"subject": subject, "body": body}
     if provider == "gmail":
-        return "https://mail.google.com/mail/?" + urlencode({"view": "cm", "fs": "1", "su": subject, "body": body})
+        return "https://mail.google.com/mail/?" + urlencode({"view": "cm", "fs": "1", "su": subject, "body": body}, quote_via=quote)
     if provider in {"outlook", "outlook_web", "office365"}:
-        return "https://outlook.office.com/mail/deeplink/compose?" + urlencode({"subject": subject, "body": body})
-    return "mailto:?" + urlencode({"subject": subject, "body": body})
+        return "https://outlook.office.com/mail/deeplink/compose?" + urlencode(params, quote_via=quote)
+    return "mailto:?" + urlencode(params, quote_via=quote)
 
 
 def _api(environ: dict[str, Any], start_response: Callable, path: str):
@@ -388,23 +432,31 @@ def _api(environ: dict[str, Any], start_response: Callable, path: str):
             xlsx = EXPORT_DIR / f"{base}_{stamp}.xlsx"
             pdf = EXPORT_DIR / f"{base}_{stamp}.pdf"
             create_workbook(payload, xlsx)
-            create_pdf(payload, pdf)
+            result_pdf = Path(create_pdf(payload, pdf))
+            if result_pdf.suffix.lower() != ".pdf" or not result_pdf.exists() or result_pdf.read_bytes()[:5] != b"%PDF-":
+                raise RuntimeError("PDF export failed because the generated file was not a valid PDF.")
+
+            excel_link = _make_share_url(environ, xlsx.name)
+            pdf_link = _make_share_url(environ, result_pdf.name)
             subject = f"Producer Calendar - {schedule.get('projectTitle') or 'Feature Film'}"
             body = (
                 "Producer Calendar exports are ready.\n\n"
                 f"Project: {schedule.get('projectTitle') or 'Feature Film'}\n"
                 f"Production location: {schedule.get('productionLocationLabel')}\n"
                 f"Ready for Release: {(schedule.get('ready') or {}).get('displayDate', '')}\n\n"
-                "Download the files from the hosted app, then attach them to this email if your email provider does not attach them automatically.\n"
+                "Download links:\n"
+                f"Excel: {excel_link}\n"
+                f"PDF: {pdf_link}\n\n"
+                "Links expire in 7 days. Attachments are not inserted by the browser email draft; download and attach the files if you want physical attachments.\n"
             )
             email_url = _build_email_url(payload.get("emailProvider") or "system", subject, body)
             return _json_response(start_response, 200, {
                 "ok": True,
                 "provider": payload.get("emailProvider") or "system",
                 "emailUrl": email_url,
-                "excel": {"filename": xlsx.name, "downloadUrl": f"/exports/{xlsx.name}"},
-                "pdf": {"filename": pdf.name, "downloadUrl": f"/exports/{pdf.name}"},
-                "message": "Exports created. Download links are ready; email drafts cannot reliably attach files from a browser compose link.",
+                "excel": {"filename": xlsx.name, "downloadUrl": f"/exports/{xlsx.name}", "shareUrl": excel_link},
+                "pdf": {"filename": result_pdf.name, "downloadUrl": f"/exports/{result_pdf.name}", "shareUrl": pdf_link},
+                "message": "Exports created. The email draft now includes direct Excel and PDF download links.",
             })
 
         return _json_response(start_response, 404, {"ok": False, "error": "Not found"})
@@ -422,6 +474,24 @@ def application(environ: dict[str, Any], start_response: Callable):
 
     if path.startswith("/static/"):
         return _serve_static(start_response, path)
+
+    if path.startswith("/share/") and method == "GET":
+        filename = Path(path[len("/share/"):]).name
+        qs = parse_qs(environ.get("QUERY_STRING") or "")
+        token = (qs.get("token", [""])[0] or "").strip()
+        if not _verify_share_token(filename, token):
+            return _response(start_response, 403, b"This export link is invalid or has expired.")
+        target = (EXPORT_DIR / filename).resolve()
+        if not str(target).startswith(str(EXPORT_DIR.resolve())) or not target.exists() or not target.is_file():
+            return _response(start_response, 404, b"Export not found")
+        if target.suffix.lower() == ".pdf":
+            ctype = "application/pdf"
+        elif target.suffix.lower() == ".xlsx":
+            ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            ctype = "application/octet-stream"
+        headers = [("Content-Disposition", f'attachment; filename="{target.name}"')]
+        return _response(start_response, 200, target.read_bytes(), ctype, headers)
 
     if path == "/login" and method == "GET":
         if _current_user(environ):

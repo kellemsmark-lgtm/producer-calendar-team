@@ -84,3 +84,7 @@ After the app is hosted at an HTTPS URL:
 - The app stores exports temporarily on the server for download.
 - Email draft links cannot reliably attach generated files across every provider, so the app creates downloadable Excel/PDF files and opens the chosen compose flow.
 - For one-click email with attachments, the next step is Microsoft Graph or SMTP integration.
+
+## v1.1 update
+
+Email Draft now includes direct signed Excel/PDF download links in the message body. Links expire in 7 days. True file attachments require a provider API integration such as Microsoft Graph, Gmail API, or SMTP.

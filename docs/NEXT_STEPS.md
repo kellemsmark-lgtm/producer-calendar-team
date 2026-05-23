@@ -27,3 +27,7 @@ Recommended enhancements after pilot:
 ## Phase 3 - Native wrapper if needed
 
 If a true App Store/TestFlight app is still desired, wrap the hosted PWA in a native iOS/iPadOS shell after the hosted workflow is locked.
+
+## v1.1 Email draft behavior
+
+The Email Draft button now creates both exports and places direct, signed download links for the Excel and PDF files into the email body. These links expire after 7 days. Browser compose links cannot attach files directly; true attachment sending should be implemented later through Microsoft Graph, Gmail API, or SMTP.
