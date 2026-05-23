@@ -324,17 +324,19 @@ def _login_page(error: str = "") -> bytes:
   <title>{html.escape(APP_NAME)} Login</title>
   <style>
     * {{ box-sizing: border-box; }}
-    body {{ margin:0; min-height:100vh; display:grid; place-items:center; font-family:Arial,Helvetica,sans-serif; background:radial-gradient(circle at top left,#f6f8ff 0,#eef2f8 55%,#d9e0ec 100%); color:#111827; padding:20px; }}
-    .card {{ width:min(440px,100%); background:white; border:1px solid #d0d7e2; border-radius:24px; box-shadow:0 18px 52px rgba(16,24,39,.18); padding:28px; }}
-    .eyebrow {{ font-size:12px; text-transform:uppercase; letter-spacing:.14em; color:#2f6fec; font-weight:900; }}
-    h1 {{ margin:6px 0 8px; font-size:32px; line-height:1; }}
-    p {{ margin:0 0 18px; color:#667085; line-height:1.4; }}
-    label {{ display:block; font-size:12px; text-transform:uppercase; font-weight:900; color:#667085; letter-spacing:.05em; margin:14px 0 6px; }}
-    input {{ width:100%; border:1px solid #d0d7e2; border-radius:13px; padding:13px; font:inherit; }}
-    button {{ width:100%; border:0; border-radius:13px; margin-top:18px; padding:13px; background:#2f6fec; color:white; font-weight:900; font-size:16px; cursor:pointer; }}
-    .error {{ background:#fff4e5; border:1px solid #ffd6a0; color:#8a4b00; border-radius:13px; padding:10px; margin:14px 0; }}
-    .warning {{ background:#fff4e5; border:1px solid #ffd6a0; color:#8a4b00; border-radius:13px; padding:10px; margin:14px 0; font-size:13px; line-height:1.35; }}
-    .small {{ margin-top:16px; font-size:12px; color:#667085; }}
+    html {{ min-height:100%; -webkit-text-size-adjust:100%; }}
+    body {{ margin:0; min-height:100vh; display:grid; place-items:center; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI",Helvetica,Arial,sans-serif; background:radial-gradient(circle at 10% 0,rgba(10,132,255,.22),transparent 34%),radial-gradient(circle at 90% 4%,rgba(112,173,71,.18),transparent 30%),linear-gradient(180deg,#f5f6fb,#eceff6); color:#111114; padding:24px; }}
+    .card {{ width:min(460px,100%); background:rgba(255,255,255,.82); border:1px solid rgba(255,255,255,.72); border-radius:30px; box-shadow:0 24px 70px rgba(27,39,64,.16); padding:30px; backdrop-filter:saturate(180%) blur(26px); -webkit-backdrop-filter:saturate(180%) blur(26px); }}
+    .card::before {{ content:""; display:block; width:56px; height:56px; border-radius:17px; background:linear-gradient(145deg,#0a84ff,#0b1220 72%); box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 14px 30px rgba(0,102,204,.25); margin-bottom:18px; }}
+    .eyebrow {{ font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:#0066cc; font-weight:800; }}
+    h1 {{ margin:6px 0 8px; font-size:36px; line-height:1; letter-spacing:-.035em; }}
+    p {{ margin:0 0 18px; color:#6e6e73; line-height:1.42; }}
+    label {{ display:block; font-size:12px; font-weight:760; color:#6e6e73; margin:14px 0 6px; }}
+    input {{ width:100%; min-height:46px; border:1px solid rgba(60,60,67,.14); border-radius:15px; padding:12px 13px; font:inherit; background:rgba(255,255,255,.82); outline:none; }}
+    input:focus {{ border-color:rgba(0,102,204,.55); box-shadow:0 0 0 4px rgba(0,102,204,.13); background:#fff; }}
+    button {{ width:100%; border:0; border-radius:15px; margin-top:18px; padding:13px; background:linear-gradient(180deg,#0a84ff,#0066cc); color:white; font-weight:800; font-size:16px; cursor:pointer; box-shadow:0 12px 26px rgba(0,102,204,.24); }}
+    .error,.warning {{ background:#fff7eb; border:1px solid #ffdca8; color:#7a4700; border-radius:15px; padding:11px; margin:14px 0; font-size:13px; line-height:1.35; }}
+    .small {{ margin-top:16px; font-size:12px; color:#6e6e73; }}
   </style>
 </head>
 <body>

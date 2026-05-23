@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v1';
+const CACHE_NAME = 'producer-calendar-static-v1-2-polished';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',
@@ -20,7 +20,7 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/exports/') || url.pathname === '/' || url.pathname === '/login' || event.request.method !== 'GET') {
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/exports/') || url.pathname.startsWith('/share/') || url.pathname === '/' || url.pathname === '/login' || event.request.method !== 'GET') {
     return;
   }
   if (url.pathname.startsWith('/static/')) {

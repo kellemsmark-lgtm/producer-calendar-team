@@ -9,7 +9,7 @@ const periodMeta = {
   ready: { label: 'Ready for Release', color: '#000000', text: '#ffffff' }
 };
 
-const stateKey = 'producerCalendarTeamHostedStateV1';
+const stateKey = 'producerCalendarTeamHostedStateV2';
 let activeYear = null;
 let lastSchedule = null;
 let timer = null;
@@ -37,7 +37,7 @@ function $(id) { return document.getElementById(id); }
 
 function loadState() {
   try {
-    const raw = localStorage.getItem(stateKey);
+    const raw = localStorage.getItem(stateKey) || localStorage.getItem('producerCalendarTeamHostedStateV1');
     if (!raw) return structuredClone(defaults);
     return deepMerge(structuredClone(defaults), JSON.parse(raw));
   } catch (e) {
@@ -67,14 +67,6 @@ function normalizeDateInput(value) {
   if (digits.length === 6) return `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4,6)}`;
   if (digits.length === 8) return `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(6,8)}`;
   return value;
-}
-
-function formatDateLabel(iso) {
-  if (!iso) return '';
-  const [y, m, d] = iso.split('-').map(Number);
-  if (!y || !m || !d) return iso;
-  const yy = String(y).slice(-2);
-  return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${yy}`;
 }
 
 function payloadFromForm() {
@@ -127,7 +119,7 @@ function updateAndCalculate() {
   payload.lastEditedAnchor = current.lastEditedAnchor || 'production';
   saveState(payload);
   clearTimeout(timer);
-  timer = setTimeout(calculate, 150);
+  timer = setTimeout(calculate, 160);
 }
 
 async function calculate() {
@@ -157,11 +149,14 @@ function setBusy(busy) {
 }
 
 function renderSchedule(data) {
-  $('pageTitle').textContent = data.projectTitle || 'Feature Film';
-  $('calendarTitle').textContent = `${data.projectTitle || 'Feature Film'} Calendar`;
-  $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays are used to extend Production. All phases are calculated on Monday-Friday workweeks.`;
+  const projectTitle = data.projectTitle || 'Feature Film';
+  $('pageTitle').textContent = projectTitle;
+  $('calendarTitle').textContent = `${projectTitle} Calendar`;
+  $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays extend Production. All phases use Monday-Friday workweeks.`;
   renderMessages(data);
   renderYearChips(data);
+  renderStats(data);
+  renderPhaseLegend(data);
   renderSummary(data);
   renderCalendar(data, activeYear);
   renderHolidayList(data, activeYear);
@@ -177,7 +172,7 @@ function renderMessages(data) {
 
 function renderYearChips(data) {
   const years = data.years || [new Date().getFullYear()];
-  $('yearChips').innerHTML = years.map(y => `<button class="${y === activeYear ? 'active' : ''}" data-year="${y}">${y}</button>`).join('');
+  $('yearChips').innerHTML = years.map(y => `<button class="${y === activeYear ? 'active' : ''}" data-year="${y}" aria-pressed="${y === activeYear ? 'true' : 'false'}">${y}</button>`).join('');
   $('yearChips').querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => {
       activeYear = Number(btn.dataset.year);
@@ -186,21 +181,59 @@ function renderYearChips(data) {
   });
 }
 
+function renderStats(data) {
+  const production = (data.periods || []).find(p => p.key === 'production');
+  const post = (data.periods || []).find(p => p.key === 'post');
+  const ready = data.ready || {};
+  const years = (data.years || []).join(' - ') || '—';
+  const shootDays = production?.metric?.value ?? Number($('productionDays').value || 0);
+  const holidayExt = production?.metric?.skippedHolidays ?? 0;
+  const postWeeks = post?.metric?.value ?? Number($('postWeeks').value || 0);
+  const cards = [
+    ['Ready', ready.displayDate || 'Not set', 'Release milestone'],
+    ['Shoot days', shootDays ? `${shootDays}` : '0', `${holidayExt} holiday extension day${holidayExt === 1 ? '' : 's'}`],
+    ['Post', postWeeks ? `${postWeeks} weeks` : '0 weeks', 'Workweek basis'],
+    ['Years', years, data.productionLocationLabel || 'United States']
+  ];
+  $('statsGrid').innerHTML = cards.map(([label, value, sub]) => `<div class="stat-card"><div class="stat-label">${escapeHtml(label)}</div><div class="stat-value">${escapeHtml(value)}</div><div class="stat-sub">${escapeHtml(sub)}</div></div>`).join('');
+}
+
+function renderPhaseLegend(data) {
+  const activeKeys = new Set((data.periods || []).map(p => p.key));
+  if (data.ready?.displayDate) activeKeys.add('ready');
+  const order = ['rd', 'pre', 'travel', 'production', 'hiatus', 'post', 'print_ship', 'ready'];
+  const chips = order.filter(key => activeKeys.has(key)).map(key => {
+    const meta = periodMeta[key];
+    return `<span class="legend-chip"><span class="legend-dot" style="background:${meta.color}"></span>${escapeHtml(meta.label)}</span>`;
+  });
+  $('phaseLegend').innerHTML = chips.join('');
+}
+
 function renderSummary(data) {
-  const rows = [];
-  rows.push(`<tr><th>Location</th><td>${escapeHtml(data.productionLocationLabel || '')}</td></tr>`);
-  rows.push(`<tr><th>Anchor</th><td>${escapeHtml(data.anchorLabel || '')}</td></tr>`);
-  if (data.ready && data.ready.displayDate) rows.push(`<tr><th>Ready</th><td><span class="phase-pill ready" style="background:#000">${escapeHtml(data.ready.displayDate)}</span></td></tr>`);
-  for (const p of data.periods || []) {
+  const metaRows = [
+    ['Location', data.productionLocationLabel || ''],
+    ['Anchor', data.anchorLabel || ''],
+  ];
+  if (data.ready && data.ready.displayDate) metaRows.push(['Ready', data.ready.displayDate]);
+  const metaHtml = `<div class="summary-meta">${metaRows.map(([label, value]) => `<div class="summary-meta-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
+  const periodHtml = (data.periods || []).map(p => {
     const metric = p.metric || {};
     let metricText = '';
     if (metric.type === 'weeks') metricText = `${metric.value} weeks`;
-    if (metric.type === 'workdays') metricText = `${metric.value} prod. days; ${metric.skippedHolidays || 0} holiday extension day(s)`;
-    if (metric.type === 'date_range') metricText = 'single range';
-    const pillText = periodMeta[p.key]?.text ? `;color:${periodMeta[p.key].text}` : '';
-    rows.push(`<tr><th><span class="phase-pill" style="background:#${p.color}${pillText}">${escapeHtml(p.label)}</span></th><td>${escapeHtml(p.displayStart)} - ${escapeHtml(p.displayEnd)}<br><small>${escapeHtml(metricText)}</small></td></tr>`);
-  }
-  $('summary').innerHTML = `<table class="summary-table">${rows.join('')}</table>`;
+    if (metric.type === 'workdays') metricText = `${metric.value} shoot days; ${metric.skippedHolidays || 0} holiday extension day(s)`;
+    if (metric.type === 'date_range') metricText = 'single date range';
+    const meta = periodMeta[p.key] || { color: `#${p.color}`, label: p.label };
+    const textColor = meta.text ? `color:${meta.text};` : '';
+    return `<div class="summary-item">
+      <span class="summary-swatch" style="background:${meta.color};${textColor}"></span>
+      <div>
+        <div class="summary-title">${escapeHtml(p.label)}</div>
+        <div class="summary-dates">${escapeHtml(p.displayStart)} - ${escapeHtml(p.displayEnd)}</div>
+        <div class="summary-metric">${escapeHtml(metricText)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  $('summary').innerHTML = `${metaHtml}<div class="summary-list">${periodHtml || '<div class="summary-meta-row"><span>No phases yet</span><strong>Enter an anchor date</strong></div>'}</div>`;
 }
 
 function renderCalendar(data, year) {
@@ -210,6 +243,12 @@ function renderCalendar(data, year) {
   $('calendarGrid').innerHTML = months.join('');
   $('calendarGrid').querySelectorAll('.day.has-data').forEach(el => {
     el.addEventListener('click', () => renderDayDetail(rowsByDate.get(el.dataset.date)));
+    el.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        renderDayDetail(rowsByDate.get(el.dataset.date));
+      }
+    });
   });
 }
 
@@ -219,7 +258,7 @@ function renderMonth(year, monthIndex, rowsByDate) {
   const startOffset = first.getDay();
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
   let cells = '';
-  for (let i = 0; i < startOffset; i++) cells += `<div class="day empty"></div>`;
+  for (let i = 0; i < startOffset; i++) cells += `<div class="day empty" aria-hidden="true"></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
     const iso = toIso(year, monthIndex + 1, d);
     const row = rowsByDate.get(iso) || {};
@@ -244,17 +283,18 @@ function renderMonth(year, monthIndex, rowsByDate) {
     }
     const textColor = ready ? 'white' : (keys.length ? periodMeta[keys[keys.length - 1]]?.text : '');
     const style = bg ? ` style="background:${bg};${textColor ? `color:${textColor};` : ''}"` : '';
-    cells += `<div class="day ${weekend ? 'weekend' : ''} ${hasData ? 'has-data' : ''} ${ready ? 'ready' : ''} ${productionNonWork ? 'production-nonwork' : ''}" data-date="${iso}"${style}>
+    const aria = hasData ? `${row.displayDate || iso}: ${(row.periodLabels || []).concat(holidays).concat(ready ? ['Ready for Release'] : []).join(', ')}` : `${monthName} ${d}, ${year}`;
+    cells += `<div class="day ${weekend ? 'weekend' : ''} ${hasData ? 'has-data' : ''} ${ready ? 'ready' : ''} ${productionNonWork ? 'production-nonwork' : ''}" data-date="${iso}" ${hasData ? 'role="button" tabindex="0"' : ''} aria-label="${escapeHtml(aria)}"${style}>
       <div class="num">${d}</div>
       ${holidays.length ? '<div class="holiday-dot" title="Holiday"></div>' : ''}
       ${mini ? `<div class="mini">${escapeHtml(mini)}</div>` : ''}
     </div>`;
   }
   const totalCells = startOffset + daysInMonth;
-  for (let i = totalCells; i < 42; i++) cells += `<div class="day empty"></div>`;
-  return `<section class="month">
-    <div class="month-title">${monthName.toUpperCase()}</div>
-    <div class="weekdays"><div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div></div>
+  for (let i = totalCells; i < 42; i++) cells += `<div class="day empty" aria-hidden="true"></div>`;
+  return `<section class="month" aria-label="${escapeHtml(monthName)} ${year}">
+    <div class="month-title"><span>${escapeHtml(monthName)}</span><span>${year}</span></div>
+    <div class="weekdays"><div>Su</div><div>M</div><div>Tu</div><div>W</div><div>Th</div><div>F</div><div>Sa</div></div>
     <div class="days">${cells}</div>
   </section>`;
 }
@@ -273,12 +313,11 @@ function renderDayDetail(row) {
   if (!row) return;
   const tags = [];
   for (const key of row.periodKeys || []) {
-    const textColor = periodMeta[key]?.text ? `;color:${periodMeta[key].text}` : '';
-    tags.push(`<span class="tag" style="background:${periodMeta[key]?.color || '#eee'}${textColor}">${escapeHtml(periodMeta[key]?.label || key)}</span>`);
+    const meta = periodMeta[key] || { color: '#eee', label: key };
+    const textColor = meta.text ? `;color:${meta.text}` : '';
+    tags.push(`<span class="tag" style="background:${meta.color}${textColor}">${escapeHtml(meta.label)}</span>`);
   }
-  for (const h of row.holidayNames || []) {
-    tags.push(`<span class="tag" style="background:#d9ead3">${escapeHtml(h)}</span>`);
-  }
+  for (const h of row.holidayNames || []) tags.push(`<span class="tag" style="background:#d9ead3">${escapeHtml(h)}</span>`);
   if (row.ready) tags.push(`<span class="tag" style="background:#000;color:#fff">Ready for Release</span>`);
   $('dayDetail').innerHTML = `<div class="detail-date">${escapeHtml(row.displayDate)}</div>
     <div>${escapeHtml(row.weekday || '')}</div>
@@ -349,21 +388,25 @@ async function emailDraft() {
   }
 }
 
-function showTransient(message, warn=false) {
+function showTransient(message, warn = false) {
   const div = document.createElement('div');
   div.className = `message ${warn ? 'warn' : 'note'}`;
   if (String(message).includes('<a ')) div.innerHTML = message;
   else div.textContent = message;
   $('messages').prepend(div);
-  setTimeout(() => div.remove(), 9000);
+  setTimeout(() => div.remove(), 10000);
 }
 
 function initTabs() {
   document.querySelectorAll('#toolbarTabs button').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('#toolbarTabs button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#toolbarTabs button').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-selected', 'false');
+      });
       document.querySelectorAll('.period-form').forEach(f => f.classList.remove('active'));
       btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
       document.querySelector(`.period-form[data-form="${btn.dataset.tab}"]`).classList.add('active');
     });
   });
@@ -400,6 +443,7 @@ function bindInputs() {
   $('resetBtn').addEventListener('click', () => {
     if (!confirm('Reset this calendar?')) return;
     localStorage.removeItem(stateKey);
+    localStorage.removeItem('producerCalendarTeamHostedStateV1');
     setFormFromState(structuredClone(defaults));
     activeYear = null;
     updateAndCalculate();
