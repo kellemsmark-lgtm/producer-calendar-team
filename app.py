@@ -1,0 +1,486 @@
+#!/usr/bin/env python3
+"""Hosted Producer Calendar team web app.
+
+Pure WSGI app so it can run behind Gunicorn in Docker without a local Terminal.
+It provides:
+- Team login with signed server-side sessions
+- Responsive PWA UI for Mac, iPhone, and iPad
+- Schedule API
+- Reference-format Excel export
+- PDF export that produces PDF files only
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import html
+import json
+import mimetypes
+import os
+from pathlib import Path
+import secrets
+import shutil
+import tempfile
+import time
+from datetime import datetime
+from http import HTTPStatus
+from http.cookies import SimpleCookie
+from typing import Any, Callable
+from urllib.parse import parse_qs, urlencode
+
+from calendar_engine import calculate_schedule
+from export_excel import create_workbook
+from export_pdf import create_pdf
+
+APP_DIR = Path(__file__).resolve().parent
+STATIC_DIR = APP_DIR / "static"
+EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports"))
+EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
+SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
+SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
+SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
+MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "12"))
+LOGIN_WINDOW_SECONDS = int(os.environ.get("LOGIN_WINDOW_SECONDS", str(15 * 60)))
+
+SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("CALENDAR_SECRET_KEY") or secrets.token_hex(32)
+
+SESSIONS: dict[str, dict[str, Any]] = {}
+LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+
+
+def _safe_filename(name: str) -> str:
+    name = (name or "Producer Calendar").strip()
+    safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in name)
+    safe = "_".join(safe.split())
+    return safe[:80] or "Producer_Calendar"
+
+
+def _json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, default=str).encode("utf-8")
+
+
+def _hash_password(password: str, salt: str | None = None, iterations: int = 260000) -> str:
+    salt = salt or base64.urlsafe_b64encode(secrets.token_bytes(18)).decode("ascii").rstrip("=")
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+    digest = base64.urlsafe_b64encode(dk).decode("ascii").rstrip("=")
+    return f"pbkdf2_sha256${iterations}${salt}${digest}"
+
+
+def _verify_password(stored_hash: str, password: str) -> bool:
+    try:
+        scheme, iter_s, salt, digest = stored_hash.split("$", 3)
+        if scheme != "pbkdf2_sha256":
+            return False
+        check = _hash_password(password, salt=salt, iterations=int(iter_s))
+        return hmac.compare_digest(check, stored_hash)
+    except Exception:
+        return False
+
+
+def _load_users() -> tuple[dict[str, str], bool]:
+    """Return username -> password hash and whether app is using fallback credentials.
+
+    Preferred production config:
+        CALENDAR_USERS_JSON='{"andy.davis":"strong password","team.member":"another password"}'
+    or:
+        CALENDAR_USERNAME='andy.davis'
+        CALENDAR_PASSWORD='strong password'
+    """
+    users: dict[str, str] = {}
+    hashes = os.environ.get("CALENDAR_PASSWORD_HASHES_JSON")
+    if hashes:
+        parsed = json.loads(hashes)
+        return {str(k): str(v) for k, v in parsed.items()}, False
+
+    users_json = os.environ.get("CALENDAR_USERS_JSON")
+    if users_json:
+        parsed = json.loads(users_json)
+        for username, password in parsed.items():
+            users[str(username)] = _hash_password(str(password))
+        return users, False
+
+    users_simple = os.environ.get("CALENDAR_USERS")
+    if users_simple:
+        # Format: username:password,another.user:another-password
+        for pair in users_simple.split(","):
+            if not pair.strip() or ":" not in pair:
+                continue
+            username, password = pair.split(":", 1)
+            users[username.strip()] = _hash_password(password.strip())
+        if users:
+            return users, False
+
+    username = os.environ.get("CALENDAR_USERNAME")
+    password = os.environ.get("CALENDAR_PASSWORD")
+    if username and password:
+        return {username: _hash_password(password)}, False
+
+    # Development-only fallback so the container can be smoke tested.
+    return {"demo": _hash_password("change-me-now")}, True
+
+
+USERS, USING_FALLBACK_LOGIN = _load_users()
+
+
+def _sign(value: str) -> str:
+    sig = hmac.new(SECRET_KEY.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{value}.{sig}"
+
+
+def _unsign(value: str) -> str | None:
+    if "." not in value:
+        return None
+    raw, sig = value.rsplit(".", 1)
+    expected = hmac.new(SECRET_KEY.encode("utf-8"), raw.encode("utf-8"), hashlib.sha256).hexdigest()
+    if hmac.compare_digest(sig, expected):
+        return raw
+    return None
+
+
+def _client_ip(environ: dict[str, Any]) -> str:
+    forwarded = environ.get("HTTP_X_FORWARDED_FOR")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return environ.get("REMOTE_ADDR", "unknown")
+
+
+def _is_https(environ: dict[str, Any]) -> bool:
+    return environ.get("wsgi.url_scheme") == "https" or environ.get("HTTP_X_FORWARDED_PROTO", "").split(",")[0].strip() == "https"
+
+
+def _cookie_header(token: str, environ: dict[str, Any], clear: bool = False) -> str:
+    secure = SECURE_COOKIES and _is_https(environ)
+    parts = [f"{SESSION_COOKIE}={token if not clear else ''}", "Path=/", "HttpOnly", "SameSite=Lax"]
+    if secure:
+        parts.append("Secure")
+    if clear:
+        parts.append("Max-Age=0")
+    else:
+        parts.append(f"Max-Age={SESSION_TTL_SECONDS}")
+    return "; ".join(parts)
+
+
+def _parse_cookies(environ: dict[str, Any]) -> SimpleCookie:
+    c = SimpleCookie()
+    raw = environ.get("HTTP_COOKIE") or ""
+    try:
+        c.load(raw)
+    except Exception:
+        pass
+    return c
+
+
+def _current_user(environ: dict[str, Any]) -> str | None:
+    cookies = _parse_cookies(environ)
+    morsel = cookies.get(SESSION_COOKIE)
+    if not morsel:
+        return None
+    token = _unsign(morsel.value)
+    if not token:
+        return None
+    sess = SESSIONS.get(token)
+    if not sess:
+        return None
+    if sess.get("expires", 0) < time.time():
+        SESSIONS.pop(token, None)
+        return None
+    sess["expires"] = time.time() + SESSION_TTL_SECONDS
+    return str(sess.get("username"))
+
+
+def _make_session(username: str) -> str:
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = {"username": username, "expires": time.time() + SESSION_TTL_SECONDS}
+    return _sign(token)
+
+
+def _cleanup_sessions() -> None:
+    now = time.time()
+    for token, sess in list(SESSIONS.items()):
+        if sess.get("expires", 0) < now:
+            SESSIONS.pop(token, None)
+
+
+def _rate_limited(ip: str) -> bool:
+    now = time.time()
+    attempts = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t <= LOGIN_WINDOW_SECONDS]
+    LOGIN_ATTEMPTS[ip] = attempts
+    return len(attempts) >= MAX_LOGIN_ATTEMPTS
+
+
+def _record_failed_login(ip: str) -> None:
+    LOGIN_ATTEMPTS.setdefault(ip, []).append(time.time())
+
+
+def _read_body(environ: dict[str, Any]) -> bytes:
+    length = int(environ.get("CONTENT_LENGTH") or 0)
+    return environ["wsgi.input"].read(length) if length else b""
+
+
+def _read_json(environ: dict[str, Any]) -> dict[str, Any]:
+    raw = _read_body(environ)
+    if not raw:
+        return {}
+    return json.loads(raw.decode("utf-8"))
+
+
+def _status(code: int) -> str:
+    try:
+        phrase = HTTPStatus(code).phrase
+    except Exception:
+        phrase = "OK"
+    return f"{code} {phrase}"
+
+
+def _headers(content_type: str, length: int | None = None, extra: list[tuple[str, str]] | None = None, no_store: bool = True) -> list[tuple[str, str]]:
+    headers = [("Content-Type", content_type)]
+    if length is not None:
+        headers.append(("Content-Length", str(length)))
+    if no_store:
+        headers.append(("Cache-Control", "no-store"))
+    headers.extend([
+        ("X-Content-Type-Options", "nosniff"),
+        ("X-Frame-Options", "DENY"),
+        ("Referrer-Policy", "same-origin"),
+    ])
+    if extra:
+        headers.extend(extra)
+    return headers
+
+
+def _response(start_response: Callable, code: int, body: bytes, content_type: str = "text/plain", extra: list[tuple[str, str]] | None = None, no_store: bool = True):
+    start_response(_status(code), _headers(content_type, len(body), extra, no_store=no_store))
+    return [body]
+
+
+def _json_response(start_response: Callable, code: int, payload: Any, extra: list[tuple[str, str]] | None = None):
+    return _response(start_response, code, _json_bytes(payload), "application/json", extra)
+
+
+def _redirect(start_response: Callable, location: str, extra: list[tuple[str, str]] | None = None):
+    headers = [("Location", location)]
+    if extra:
+        headers.extend(extra)
+    return _response(start_response, 302, b"", "text/plain", headers)
+
+
+def _login_page(error: str = "") -> bytes:
+    fallback = ""
+    if USING_FALLBACK_LOGIN:
+        fallback = """
+          <div class=\"warning\"><b>Setup required:</b> this deployment is using demo credentials. Set CALENDAR_USERNAME/CALENDAR_PASSWORD or CALENDAR_USERS_JSON before sharing with the team.</div>
+        """
+    safe_error = html.escape(error)
+    return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">
+  <meta name=\"apple-mobile-web-app-capable\" content=\"yes\">
+  <meta name=\"apple-mobile-web-app-title\" content=\"Producer Calendar\">
+  <meta name=\"theme-color\" content=\"#101827\">
+  <link rel=\"manifest\" href=\"/static/manifest.webmanifest\">
+  <link rel=\"apple-touch-icon\" href=\"/static/icons/apple-touch-icon.png\">
+  <title>{html.escape(APP_NAME)} Login</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{ margin:0; min-height:100vh; display:grid; place-items:center; font-family:Arial,Helvetica,sans-serif; background:radial-gradient(circle at top left,#f6f8ff 0,#eef2f8 55%,#d9e0ec 100%); color:#111827; padding:20px; }}
+    .card {{ width:min(440px,100%); background:white; border:1px solid #d0d7e2; border-radius:24px; box-shadow:0 18px 52px rgba(16,24,39,.18); padding:28px; }}
+    .eyebrow {{ font-size:12px; text-transform:uppercase; letter-spacing:.14em; color:#2f6fec; font-weight:900; }}
+    h1 {{ margin:6px 0 8px; font-size:32px; line-height:1; }}
+    p {{ margin:0 0 18px; color:#667085; line-height:1.4; }}
+    label {{ display:block; font-size:12px; text-transform:uppercase; font-weight:900; color:#667085; letter-spacing:.05em; margin:14px 0 6px; }}
+    input {{ width:100%; border:1px solid #d0d7e2; border-radius:13px; padding:13px; font:inherit; }}
+    button {{ width:100%; border:0; border-radius:13px; margin-top:18px; padding:13px; background:#2f6fec; color:white; font-weight:900; font-size:16px; cursor:pointer; }}
+    .error {{ background:#fff4e5; border:1px solid #ffd6a0; color:#8a4b00; border-radius:13px; padding:10px; margin:14px 0; }}
+    .warning {{ background:#fff4e5; border:1px solid #ffd6a0; color:#8a4b00; border-radius:13px; padding:10px; margin:14px 0; font-size:13px; line-height:1.35; }}
+    .small {{ margin-top:16px; font-size:12px; color:#667085; }}
+  </style>
+</head>
+<body>
+  <form class=\"card\" method=\"post\" action=\"/login\">
+    <div class=\"eyebrow\">Team Login</div>
+    <h1>Producer Calendar</h1>
+    <p>Sign in to create, export, and share production calendars.</p>
+    {fallback}
+    {f'<div class="error">{safe_error}</div>' if error else ''}
+    <label>Username</label>
+    <input name=\"username\" autocomplete=\"username\" required autofocus>
+    <label>Password</label>
+    <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required>
+    <button type=\"submit\">Sign in</button>
+    <div class=\"small\">On iPhone or iPad, sign in with Safari, then use Share > Add to Home Screen.</div>
+  </form>
+</body>
+</html>""".encode("utf-8")
+
+
+def _serve_static(start_response: Callable, path: str):
+    rel = path[len("/static/"):].lstrip("/")
+    target = (STATIC_DIR / rel).resolve()
+    if not str(target).startswith(str(STATIC_DIR.resolve())):
+        return _response(start_response, 403, b"Forbidden")
+    if not target.exists() or not target.is_file():
+        return _response(start_response, 404, b"Not found")
+    ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+    # Static files may be cached; app HTML/API/exports are not cached.
+    cache_headers = [("Cache-Control", "public, max-age=3600")]
+    return _response(start_response, 200, target.read_bytes(), ctype, cache_headers, no_store=False)
+
+
+def _serve_export(start_response: Callable, path: str):
+    filename = Path(path[len("/exports/"):]).name
+    target = (EXPORT_DIR / filename).resolve()
+    if not str(target).startswith(str(EXPORT_DIR.resolve())):
+        return _response(start_response, 403, b"Forbidden")
+    if not target.exists() or not target.is_file():
+        return _response(start_response, 404, b"Export not found")
+    if target.suffix.lower() == ".pdf":
+        ctype = "application/pdf"
+    elif target.suffix.lower() == ".xlsx":
+        ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        ctype = "application/octet-stream"
+    headers = [("Content-Disposition", f'attachment; filename="{target.name}"')]
+    return _response(start_response, 200, target.read_bytes(), ctype, headers)
+
+
+def _build_email_url(provider: str, subject: str, body: str) -> str:
+    provider = (provider or "system").lower()
+    if provider == "gmail":
+        return "https://mail.google.com/mail/?" + urlencode({"view": "cm", "fs": "1", "su": subject, "body": body})
+    if provider in {"outlook", "outlook_web", "office365"}:
+        return "https://outlook.office.com/mail/deeplink/compose?" + urlencode({"subject": subject, "body": body})
+    return "mailto:?" + urlencode({"subject": subject, "body": body})
+
+
+def _api(environ: dict[str, Any], start_response: Callable, path: str):
+    try:
+        payload = _read_json(environ)
+        if path == "/api/schedule":
+            return _json_response(start_response, 200, calculate_schedule(payload))
+
+        if path == "/api/export/excel":
+            schedule = calculate_schedule(payload)
+            stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            base = _safe_filename(schedule.get("projectTitle") or "Producer Calendar")
+            out = EXPORT_DIR / f"{base}_{stamp}.xlsx"
+            create_workbook(payload, out)
+            return _json_response(start_response, 200, {"ok": True, "kind": "excel", "filename": out.name, "downloadUrl": f"/exports/{out.name}"})
+
+        if path == "/api/export/pdf":
+            schedule = calculate_schedule(payload)
+            stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            base = _safe_filename(schedule.get("projectTitle") or "Producer Calendar")
+            out = EXPORT_DIR / f"{base}_{stamp}.pdf"
+            result = Path(create_pdf(payload, out))
+            if result.suffix.lower() != ".pdf" or not result.exists() or result.read_bytes()[:5] != b"%PDF-":
+                raise RuntimeError("PDF export failed because the generated file was not a valid PDF.")
+            return _json_response(start_response, 200, {"ok": True, "kind": "pdf", "filename": result.name, "downloadUrl": f"/exports/{result.name}", "contentType": "application/pdf"})
+
+        if path == "/api/email":
+            schedule = calculate_schedule(payload)
+            stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            base = _safe_filename(schedule.get("projectTitle") or "Producer Calendar")
+            xlsx = EXPORT_DIR / f"{base}_{stamp}.xlsx"
+            pdf = EXPORT_DIR / f"{base}_{stamp}.pdf"
+            create_workbook(payload, xlsx)
+            create_pdf(payload, pdf)
+            subject = f"Producer Calendar - {schedule.get('projectTitle') or 'Feature Film'}"
+            body = (
+                "Producer Calendar exports are ready.\n\n"
+                f"Project: {schedule.get('projectTitle') or 'Feature Film'}\n"
+                f"Production location: {schedule.get('productionLocationLabel')}\n"
+                f"Ready for Release: {(schedule.get('ready') or {}).get('displayDate', '')}\n\n"
+                "Download the files from the hosted app, then attach them to this email if your email provider does not attach them automatically.\n"
+            )
+            email_url = _build_email_url(payload.get("emailProvider") or "system", subject, body)
+            return _json_response(start_response, 200, {
+                "ok": True,
+                "provider": payload.get("emailProvider") or "system",
+                "emailUrl": email_url,
+                "excel": {"filename": xlsx.name, "downloadUrl": f"/exports/{xlsx.name}"},
+                "pdf": {"filename": pdf.name, "downloadUrl": f"/exports/{pdf.name}"},
+                "message": "Exports created. Download links are ready; email drafts cannot reliably attach files from a browser compose link.",
+            })
+
+        return _json_response(start_response, 404, {"ok": False, "error": "Not found"})
+    except Exception as exc:
+        return _json_response(start_response, 500, {"ok": False, "error": str(exc)})
+
+
+def application(environ: dict[str, Any], start_response: Callable):
+    _cleanup_sessions()
+    path = environ.get("PATH_INFO") or "/"
+    method = environ.get("REQUEST_METHOD", "GET").upper()
+
+    if path == "/healthz":
+        return _json_response(start_response, 200, {"ok": True, "app": APP_NAME})
+
+    if path.startswith("/static/"):
+        return _serve_static(start_response, path)
+
+    if path == "/login" and method == "GET":
+        if _current_user(environ):
+            return _redirect(start_response, "/")
+        return _response(start_response, 200, _login_page(), "text/html")
+
+    if path == "/login" and method == "POST":
+        ip = _client_ip(environ)
+        if _rate_limited(ip):
+            return _response(start_response, 429, _login_page("Too many login attempts. Please wait and try again."), "text/html")
+        form = parse_qs(_read_body(environ).decode("utf-8"), keep_blank_values=True)
+        username = (form.get("username", [""])[0] or "").strip()
+        password = form.get("password", [""])[0] or ""
+        stored = USERS.get(username)
+        if stored and _verify_password(stored, password):
+            LOGIN_ATTEMPTS.pop(ip, None)
+            token = _make_session(username)
+            return _redirect(start_response, "/", [("Set-Cookie", _cookie_header(token, environ))])
+        _record_failed_login(ip)
+        return _response(start_response, 401, _login_page("Invalid username or password."), "text/html")
+
+    if path == "/logout":
+        cookies = _parse_cookies(environ)
+        morsel = cookies.get(SESSION_COOKIE)
+        if morsel:
+            raw = _unsign(morsel.value)
+            if raw:
+                SESSIONS.pop(raw, None)
+        return _redirect(start_response, "/login", [("Set-Cookie", _cookie_header("", environ, clear=True))])
+
+    user = _current_user(environ)
+    if not user:
+        return _redirect(start_response, "/login")
+
+    if path == "/" and method == "GET":
+        html_path = STATIC_DIR / "index.html"
+        return _response(start_response, 200, html_path.read_bytes(), "text/html")
+
+    if path == "/api/info" and method == "GET":
+        return _json_response(start_response, 200, {
+            "mode": "hosted",
+            "appName": APP_NAME,
+            "username": user,
+            "message": "Hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.",
+        })
+
+    if path.startswith("/api/") and method == "POST":
+        return _api(environ, start_response, path)
+
+    if path.startswith("/exports/") and method == "GET":
+        return _serve_export(start_response, path)
+
+    return _response(start_response, 404, b"Not found")
+
+
+if __name__ == "__main__":
+    from wsgiref.simple_server import make_server
+    port = int(os.environ.get("PORT", "8765"))
+    print(f"Producer Calendar hosted app running at http://127.0.0.1:{port}")
+    print("Dev login defaults to demo / change-me-now unless env users are set.")
+    with make_server("0.0.0.0", port, application) as httpd:
+        httpd.serve_forever()

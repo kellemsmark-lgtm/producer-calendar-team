@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: producer-calendar-team
+    env: docker
+    plan: starter
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_NAME
+        value: Producer Calendar
+      - key: SECRET_KEY
+        generateValue: true
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: CALENDAR_USERNAME
+        value: andy.davis
+      - key: CALENDAR_PASSWORD
+        sync: false

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Producer Calendar">
+  <meta name="theme-color" content="#101827">
+  <title>Producer Calendar Team App</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">Hosted Team Producer Calendar</div>
+      <h1 id="pageTitle">Feature Film</h1>
+      <div class="subline" id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</div>
+    </div>
+    <div class="top-actions">
+      <button id="calculateBtn" class="primary">Calculate</button>
+      <button id="excelBtn">Export Excel</button>
+      <button id="pdfBtn">Export PDF</button>
+      <button id="emailBtn">Email Draft</button>
+      <a class="logout-link" href="/logout">Sign Out</a>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="side-panel">
+      <div class="card project-card">
+        <label>Project title</label>
+        <input id="projectTitle" type="text" placeholder="Feature Film">
+        <label>As of date</label>
+        <input id="asOfDate" type="text" inputmode="numeric" placeholder="mm/dd/yy">
+        <label>Production location</label>
+        <select id="productionLocation">
+          <option value="US">United States</option>
+          <option value="NY">New York</option>
+          <option value="CA">Canada</option>
+          <option value="UK">United Kingdom</option>
+          <option value="MX">Mexico</option>
+        </select>
+        <label>Scheduling anchor</label>
+        <select id="anchorMode">
+          <option value="auto">Auto - use last edited date</option>
+          <option value="rd">R&D start</option>
+          <option value="pre">Pre-Production start</option>
+          <option value="travel">Travel/Prep start</option>
+          <option value="production">Production start</option>
+          <option value="hiatus">Hiatus range</option>
+          <option value="post">Post Production start</option>
+          <option value="print_ship">Print & Ship start</option>
+          <option value="ready">Ready for Release date</option>
+        </select>
+        <label>Email provider</label>
+        <select id="emailProvider">
+          <option value="system">System default</option>
+          <option value="outlook">Outlook Web / Microsoft 365</option>
+          <option value="gmail">Gmail Web</option>
+        </select>
+      </div>
+
+      <div class="card periods-card" aria-label="Production period inputs">
+        <h2>Production Inputs</h2>
+        <div class="toolbar-tabs" id="toolbarTabs">
+          <button data-tab="rd" class="active">R&D</button>
+          <button data-tab="pre">Pre-Production</button>
+          <button data-tab="travel">Travel/Prep</button>
+          <button data-tab="production">Production</button>
+          <button data-tab="hiatus">Hiatus</button>
+          <button data-tab="post">Post Production</button>
+          <button data-tab="print_ship">Print & Ship</button>
+          <button data-tab="ready">Ready for Release</button>
+        </div>
+        <div class="toolbar-content">
+          <div class="period-form active" data-form="rd">
+            <div class="period-color rd"></div>
+            <label>R&D start <input data-date-period="rd" id="rdStart" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <label>Weeks <input id="rdWeeks" type="number" min="0" step="1"></label>
+          </div>
+          <div class="period-form" data-form="pre">
+            <div class="period-color pre"></div>
+            <label>Pre-Production start <input data-date-period="pre" id="preStart" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <label>Weeks <input id="preWeeks" type="number" min="0" step="1"></label>
+          </div>
+          <div class="period-form" data-form="travel">
+            <div class="period-color travel"></div>
+            <label>Travel/Prep start <input data-date-period="travel" id="travelStart" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <label>Weeks <input id="travelWeeks" type="number" min="0" step="1"></label>
+          </div>
+          <div class="period-form" data-form="production">
+            <div class="period-color production"></div>
+            <label>Production start <input data-date-period="production" id="productionStart" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <label>Production days <input id="productionDays" type="number" min="0" step="1"></label>
+            <span class="hint">Weekdays only; selected-location holidays extend Production. Other phases also use Monday-Friday workweeks.</span>
+          </div>
+          <div class="period-form" data-form="hiatus">
+            <div class="period-color hiatus"></div>
+            <label>Hiatus start <input data-date-period="hiatus" id="hiatusStart" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <label>Hiatus end <input data-date-period="hiatus" id="hiatusEnd" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <span class="hint">Single date range; leave blank for no hiatus.</span>
+          </div>
+          <div class="period-form" data-form="post">
+            <div class="period-color post"></div>
+            <label>Post Production start <input data-date-period="post" id="postStart" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <label>Weeks <input id="postWeeks" type="number" min="0" step="1"></label>
+          </div>
+          <div class="period-form" data-form="print_ship">
+            <div class="period-color print_ship"></div>
+            <label>Print & Ship start <input data-date-period="print_ship" id="printShipStart" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <label>Weeks <input id="printShipWeeks" type="number" min="0" step="1"></label>
+          </div>
+          <div class="period-form" data-form="ready">
+            <div class="period-color ready"></div>
+            <label>Ready for Release <input data-date-period="ready" id="readyDate" type="text" inputmode="numeric" placeholder="mm/dd/yy"></label>
+            <span class="hint">Single milestone date.</span>
+          </div>
+          <div class="toolbar-extra">
+            <button id="saveBtn">Save</button>
+            <button id="resetBtn">Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card summary-card">
+        <h2>Schedule Summary</h2>
+        <div id="summary"></div>
+      </div>
+
+      <div class="card detail-card">
+        <h2>Selected Day</h2>
+        <div id="dayDetail">Click any highlighted calendar date to see period and holiday details.</div>
+      </div>
+    </section>
+
+    <section class="calendar-panel">
+      <div class="calendar-header">
+        <div>
+          <h2 id="calendarTitle">Calendar</h2>
+          <p id="calendarSubtitle">Production periods and selected-location holidays.</p>
+        </div>
+        <div id="yearChips" class="year-chips"></div>
+      </div>
+
+      <div id="messages" class="messages"></div>
+      <div id="calendarGrid" class="calendar-grid"></div>
+      <div id="holidayList" class="holiday-list"></div>
+    </section>
+  </main>
+
+
+  <script src="/static/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('/static/service-worker.js').catch(() => {}));
+    }
+  </script>
+</body>
+</html>
