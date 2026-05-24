@@ -26,3 +26,8 @@ This version refreshes the hosted team PWA without changing the core calendar en
 ## Deployment
 
 This package keeps the same Docker, Render, and environment-variable workflow as v1.1. Push the updated files to the same GitHub repo; Render can auto-deploy on commit.
+
+
+## v1.3 default period settings
+
+Default production-period values are now Pre-Production = 12 weeks, Post Production = 26 weeks, and Print & Ship = 4 weeks. Existing browser-saved values that match prior shipped defaults are migrated automatically.

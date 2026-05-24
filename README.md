@@ -88,3 +88,8 @@ After the app is hosted at an HTTPS URL:
 ## v1.1 update
 
 Email Draft now includes direct signed Excel/PDF download links in the message body. Links expire in 7 days. True file attachments require a provider API integration such as Microsoft Graph, Gmail API, or SMTP.
+
+
+## v1.3 default period settings
+
+Default production-period values are now Pre-Production = 12 weeks, Post Production = 26 weeks, and Print & Ship = 4 weeks. Existing browser-saved values that match prior shipped defaults are migrated automatically.

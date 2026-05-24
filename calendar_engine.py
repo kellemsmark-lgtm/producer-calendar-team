@@ -810,12 +810,12 @@ if __name__ == "__main__":
         "anchorMode": "production",
         "periods": {
             "rd": {"weeks": 0},
-            "pre": {"weeks": 8},
+            "pre": {"weeks": 12},
             "travel": {"weeks": 0},
             "production": {"start": "01/05/26", "days": 45},
             "hiatus": {"start": "", "end": ""},
-            "post": {"weeks": 12},
-            "print_ship": {"weeks": 2},
+            "post": {"weeks": 26},
+            "print_ship": {"weeks": 4},
             "ready": {"date": ""},
         },
     }

@@ -482,7 +482,7 @@ if __name__ == "__main__":
             "travel": {"start": "", "weeks": 0},
             "production": {"start": "10/05/26", "days": 40},
             "hiatus": {"start": "", "end": ""},
-            "post": {"start": "", "weeks": 24},
+            "post": {"start": "", "weeks": 26},
             "print_ship": {"start": "", "weeks": 4},
             "ready": {"date": "06/18/27"},
         },

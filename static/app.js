@@ -10,6 +10,8 @@ const periodMeta = {
 };
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
+const defaultsVersionKey = 'producerCalendarDefaultVersion';
+const currentDefaultsVersion = 'v1.3-production-period-defaults';
 let activeYear = null;
 let lastSchedule = null;
 let timer = null;
@@ -23,12 +25,12 @@ const defaults = {
   lastEditedAnchor: 'production',
   periods: {
     rd: { start: '', weeks: 0 },
-    pre: { start: '', weeks: 8 },
+    pre: { start: '', weeks: 12 },
     travel: { start: '', weeks: 0 },
     production: { start: '', days: 45 },
     hiatus: { start: '', end: '' },
-    post: { start: '', weeks: 12 },
-    print_ship: { start: '', weeks: 2 },
+    post: { start: '', weeks: 26 },
+    print_ship: { start: '', weeks: 4 },
     ready: { date: '' }
   }
 };
@@ -39,10 +41,32 @@ function loadState() {
   try {
     const raw = localStorage.getItem(stateKey) || localStorage.getItem('producerCalendarTeamHostedStateV1');
     if (!raw) return structuredClone(defaults);
-    return deepMerge(structuredClone(defaults), JSON.parse(raw));
+    return migrateDefaultWeeks(deepMerge(structuredClone(defaults), JSON.parse(raw)));
   } catch (e) {
     return structuredClone(defaults);
   }
+}
+
+function migrateDefaultWeeks(state) {
+  // v1.3 default update: Pre-Production 12 weeks, Post Production 26 weeks, Print & Ship 4 weeks.
+  // Preserve custom user-entered values, but upgrade prior shipped defaults from older builds.
+  try {
+    if (localStorage.getItem(defaultsVersionKey) === currentDefaultsVersion) return state;
+    state.periods = state.periods || {};
+    state.periods.pre = state.periods.pre || {};
+    state.periods.post = state.periods.post || {};
+    state.periods.print_ship = state.periods.print_ship || {};
+
+    if (state.periods.pre.weeks === undefined || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
+    if (state.periods.post.weeks === undefined || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
+    if (state.periods.print_ship.weeks === undefined || Number(state.periods.print_ship.weeks) === 2) state.periods.print_ship.weeks = 4;
+
+    localStorage.setItem(defaultsVersionKey, currentDefaultsVersion);
+    localStorage.setItem(stateKey, JSON.stringify(state));
+  } catch (e) {
+    // If storage is unavailable, defaults still populate fresh sessions.
+  }
+  return state;
 }
 
 function saveState(payload) {
@@ -99,7 +123,7 @@ function setFormFromState(s) {
   $('rdStart').value = s.periods.rd.start || '';
   $('rdWeeks').value = s.periods.rd.weeks ?? 0;
   $('preStart').value = s.periods.pre.start || '';
-  $('preWeeks').value = s.periods.pre.weeks ?? 8;
+  $('preWeeks').value = s.periods.pre.weeks ?? 12;
   $('travelStart').value = s.periods.travel.start || '';
   $('travelWeeks').value = s.periods.travel.weeks ?? 0;
   $('productionStart').value = s.periods.production.start || '';
@@ -107,9 +131,9 @@ function setFormFromState(s) {
   $('hiatusStart').value = s.periods.hiatus.start || '';
   $('hiatusEnd').value = s.periods.hiatus.end || '';
   $('postStart').value = s.periods.post.start || '';
-  $('postWeeks').value = s.periods.post.weeks ?? 12;
+  $('postWeeks').value = s.periods.post.weeks ?? 26;
   $('printShipStart').value = s.periods.print_ship.start || '';
-  $('printShipWeeks').value = s.periods.print_ship.weeks ?? 2;
+  $('printShipWeeks').value = s.periods.print_ship.weeks ?? 4;
   $('readyDate').value = s.periods.ready.date || '';
 }
 
