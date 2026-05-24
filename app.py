@@ -441,12 +441,33 @@ def _api(environ: dict[str, Any], start_response: Callable, path: str):
             excel_link = _make_share_url(environ, xlsx.name)
             pdf_link = _make_share_url(environ, result_pdf.name)
             subject = f"Producer Calendar - {schedule.get('projectTitle') or 'Feature Film'}"
+            period_lines = []
+            for period in schedule.get("periods") or []:
+                label = period.get("label") or period.get("key") or "Phase"
+                start = period.get("displayStart") or ""
+                end = period.get("displayEnd") or ""
+                metric = period.get("metric") or {}
+                metric_text = ""
+                if metric.get("type") == "weeks":
+                    metric_text = f" ({metric.get('value', 0)} weeks)"
+                elif metric.get("type") == "workdays":
+                    metric_text = f" ({metric.get('value', 0)} shoot days; {metric.get('skippedHolidays', 0)} holiday extension day(s))"
+                elif metric.get("type") == "date_range":
+                    metric_text = " (single date range)"
+                period_lines.append(f"- {label}: {start} to {end}{metric_text}")
+            coordinator_summary = str(payload.get("coordinatorSummary") or "").strip()
+            if not coordinator_summary:
+                coordinator_summary = "Production periods use Monday-Friday workweeks. Production excludes weekends and extends for selected-location holidays."
             body = (
                 "Producer Calendar exports are ready.\n\n"
                 f"Project: {schedule.get('projectTitle') or 'Feature Film'}\n"
                 f"Production location: {schedule.get('productionLocationLabel')}\n"
                 f"Ready for Release: {(schedule.get('ready') or {}).get('displayDate', '')}\n\n"
-                "Download links:\n"
+                "Schedule summary:\n"
+                + ("\n".join(period_lines) if period_lines else "- No production periods calculated yet.")
+                + "\n\nCoordinator notes:\n"
+                + coordinator_summary
+                + "\n\nDownload links:\n"
                 f"Excel: {excel_link}\n"
                 f"PDF: {pdf_link}\n\n"
                 "Links expire in 7 days. Attachments are not inserted by the browser email draft; download and attach the files if you want physical attachments.\n"

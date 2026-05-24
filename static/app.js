@@ -11,10 +11,12 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v1.3-production-period-defaults';
+const currentDefaultsVersion = 'v1.4-apple-polish-ai';
 let activeYear = null;
 let lastSchedule = null;
 let timer = null;
+let baselineScenario = null;
+let assistantStep = 0;
 
 const defaults = {
   projectTitle: 'Feature Film',
@@ -93,6 +95,18 @@ function normalizeDateInput(value) {
   return value;
 }
 
+function buildCoordinatorSummary() {
+  if (!lastSchedule) return '';
+  const production = (lastSchedule.periods || []).find(p => p.key === 'production');
+  const ready = lastSchedule.ready || {};
+  const parts = [];
+  if (lastSchedule.anchorLabel) parts.push(`Anchor: ${lastSchedule.anchorLabel}.`);
+  if (production) parts.push(`Production: ${production.displayStart} to ${production.displayEnd}, ${production.metric?.value || 0} shoot days, ${production.metric?.skippedHolidays || 0} holiday extension day(s).`);
+  if (ready.displayDate) parts.push(`Ready for Release: ${ready.displayDate}.`);
+  for (const note of lastSchedule.notes || []) parts.push(note);
+  return parts.join(' ');
+}
+
 function payloadFromForm() {
   return {
     projectTitle: $('projectTitle').value || 'Feature Film',
@@ -100,6 +114,7 @@ function payloadFromForm() {
     productionLocation: $('productionLocation').value || 'US',
     anchorMode: $('anchorMode').value || 'auto',
     emailProvider: $('emailProvider').value || 'system',
+    coordinatorSummary: buildCoordinatorSummary(),
     lastEditedAnchor: loadState().lastEditedAnchor || 'production',
     periods: {
       rd: { start: $('rdStart').value, weeks: Number($('rdWeeks').value || 0) },
@@ -178,6 +193,7 @@ function renderSchedule(data) {
   $('calendarTitle').textContent = `${projectTitle} Calendar`;
   $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays extend Production. All phases use Monday-Friday workweeks.`;
   renderMessages(data);
+  renderReasoning(data);
   renderYearChips(data);
   renderStats(data);
   renderPhaseLegend(data);
@@ -192,6 +208,24 @@ function renderMessages(data) {
   for (const w of data.warnings || []) messages.push(`<div class="message warn">${escapeHtml(w)}</div>`);
   for (const n of data.notes || []) messages.push(`<div class="message note">${escapeHtml(n)}</div>`);
   $('messages').innerHTML = messages.join('');
+}
+
+function renderReasoning(data) {
+  const production = (data.periods || []).find(p => p.key === 'production');
+  const ready = data.ready || {};
+  const holidayExt = production?.metric?.skippedHolidays || 0;
+  const notes = [];
+  if (data.anchorLabel) notes.push(['Anchor', data.anchorLabel]);
+  if (production) notes.push(['Production logic', `${production.metric?.value || 0} shoot days on Monday-Friday${holidayExt ? `, extended by ${holidayExt} selected-location holiday day${holidayExt === 1 ? '' : 's'}` : ', with no holiday extension currently applied'}.`]);
+  if (ready.displayDate) notes.push(['Release target', `Ready for Release is ${ready.displayDate}.`]);
+  for (const n of data.notes || []) notes.push(['Assumption', n]);
+  for (const w of data.warnings || []) notes.push(['Needs review', w]);
+  if (!notes.length) notes.push(['Ready', 'Enter an anchor date or ask the assistant to begin a scenario.']);
+  const limited = notes.slice(0, 6);
+  const panel = $('reasoningPanel');
+  const status = $('reasoningStatus');
+  if (panel) panel.innerHTML = limited.map(([title, body]) => `<div class="reasoning-item"><strong>${escapeHtml(title)}</strong>${escapeHtml(body)}</div>`).join('');
+  if (status) status.textContent = data.needsInput ? 'Awaiting inputs' : `${limited.length} schedule note${limited.length === 1 ? '' : 's'}`;
 }
 
 function renderYearChips(data) {
@@ -335,6 +369,7 @@ function renderHolidayList(data, year) {
 
 function renderDayDetail(row) {
   if (!row) return;
+  setMode('form', false);
   const tags = [];
   for (const key of row.periodKeys || []) {
     const meta = periodMeta[key] || { color: '#eee', label: key };
@@ -464,6 +499,20 @@ function bindInputs() {
   $('pdfBtn').addEventListener('click', () => exportFile('/api/export/pdf', '.pdf'));
   $('emailBtn').addEventListener('click', emailDraft);
   $('saveBtn').addEventListener('click', () => { saveState(payloadFromForm()); showTransient('Saved locally in this browser.'); });
+  document.querySelectorAll('[data-mirror-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.mirrorAction;
+      if (action === 'excel') $('excelBtn').click();
+      if (action === 'pdf') $('pdfBtn').click();
+      if (action === 'email') $('emailBtn').click();
+    });
+  });
+  const capture = $('captureScenarioBtn');
+  if (capture) capture.addEventListener('click', captureScenario);
+  const compare = $('compareScenarioBtn');
+  if (compare) compare.addEventListener('click', compareScenario);
+  initModes();
+  initAssistant();
   $('resetBtn').addEventListener('click', () => {
     if (!confirm('Reset this calendar?')) return;
     localStorage.removeItem(stateKey);
@@ -472,6 +521,235 @@ function bindInputs() {
     activeYear = null;
     updateAndCalculate();
   });
+}
+
+
+function setMode(mode, scrollToPanel = true) {
+  document.body.classList.remove('mode-form', 'mode-assistant', 'mode-preview');
+  document.body.classList.add(`mode-${mode}`);
+  document.querySelectorAll('.mode-button').forEach(button => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  if (scrollToPanel) {
+    const target = mode === 'assistant' ? $('aiAssistantSection') : mode === 'preview' ? document.querySelector('.calendar-panel') : $('projectSetupSection');
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function initModes() {
+  document.querySelectorAll('.mode-button').forEach(button => {
+    button.addEventListener('click', () => setMode(button.dataset.mode || 'form'));
+  });
+  setMode('form', false);
+}
+
+function displayDateForScenario(schedule) {
+  return schedule?.ready?.displayDate || 'Not set';
+}
+
+function captureScenario() {
+  if (!lastSchedule) return showTransient('Calculate a schedule before capturing Scenario A.', true);
+  baselineScenario = structuredClone(lastSchedule);
+  showTransient('Captured Scenario A. Change inputs, then choose Compare.');
+  compareScenario();
+}
+
+function compareScenario() {
+  const target = $('scenarioCompare');
+  if (!target) return;
+  if (!baselineScenario || !lastSchedule) {
+    target.textContent = 'Capture Scenario A from the left rail, then adjust inputs to compare.';
+    return;
+  }
+  const baseProd = (baselineScenario.periods || []).find(p => p.key === 'production');
+  const currProd = (lastSchedule.periods || []).find(p => p.key === 'production');
+  const rows = [
+    ['Ready', `${displayDateForScenario(baselineScenario)} → ${displayDateForScenario(lastSchedule)}`],
+    ['Production', `${baseProd?.displayStart || '—'} → ${currProd?.displayStart || '—'}`],
+    ['Shoot days', `${baseProd?.metric?.value ?? 0} → ${currProd?.metric?.value ?? 0}`],
+    ['Holiday extension', `${baseProd?.metric?.skippedHolidays ?? 0} → ${currProd?.metric?.skippedHolidays ?? 0}`]
+  ];
+  target.innerHTML = `<div class="scenario-grid">${rows.map(([label, value]) => `<div class="scenario-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
+}
+
+const assistantQuestions = [
+  { key: 'projectTitle', prompt: 'What is the project title?', field: 'projectTitle' },
+  { key: 'asOfDate', prompt: 'What as-of date should appear on the calendar? Use mm/dd/yy.', field: 'asOfDate', normalize: true },
+  { key: 'productionLocation', prompt: 'Where are we shooting for holiday rules: United States, New York, Canada, United Kingdom, or Mexico?', field: 'productionLocation', map: mapLocationAnswer },
+  { key: 'anchorMode', prompt: 'What is the scheduling anchor? I can work from Production start or Ready for Release.', field: 'anchorMode', map: mapAnchorAnswer },
+  { key: 'productionStart', prompt: 'What is the Production start date? Use mm/dd/yy. Type skip if you are anchoring by release.', field: 'productionStart', normalize: true, allowSkip: true },
+  { key: 'productionDays', prompt: 'How many Production shoot days? Default is 45. Weekends are excluded.', field: 'productionDays', number: true },
+  { key: 'preWeeks', prompt: 'How many weeks of Pre-Production? Default is 12.', field: 'preWeeks', number: true },
+  { key: 'hiatus', prompt: 'Any single hiatus range? Say none, or enter start and end dates like 12/20/26 to 01/02/27.', field: 'hiatus', hiatus: true },
+  { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
+  { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
+  { key: 'readyDate', prompt: 'What is the Ready for Release date? Use mm/dd/yy if known.', field: 'readyDate', normalize: true },
+  { key: 'emailProvider', prompt: 'Which email provider should the draft use: system default, Outlook, or Gmail?', field: 'emailProvider', map: mapEmailAnswer }
+];
+
+function initAssistant() {
+  const send = $('assistantSend');
+  const input = $('assistantInput');
+  if (!send || !input) return;
+  assistantStep = 0;
+  assistantAdd('coordinator', 'I can guide intake without replacing the form. Answer in short phrases; I will populate the structured fields and keep everything editable.');
+  assistantAdd('coordinator', assistantQuestions[assistantStep].prompt);
+  send.addEventListener('click', handleAssistantSend);
+  input.addEventListener('keydown', event => { if (event.key === 'Enter') handleAssistantSend(); });
+  document.querySelectorAll('[data-assistant-preset]').forEach(button => {
+    button.addEventListener('click', () => assistantPreset(button.dataset.assistantPreset));
+  });
+}
+
+function assistantAdd(type, text) {
+  const log = $('assistantLog');
+  if (!log) return;
+  const div = document.createElement('div');
+  div.className = `assistant-message ${type}`;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function assistantPreset(kind) {
+  setMode('assistant', false);
+  if (kind === 'production') {
+    $('anchorMode').value = 'production';
+    assistantStep = 4;
+    assistantAdd('callout', 'Production-start scenario selected. I will prioritize production start, shoot days, and downstream delivery.');
+  } else if (kind === 'release') {
+    $('anchorMode').value = 'ready';
+    assistantStep = 10;
+    assistantAdd('callout', 'Release-backward scenario selected. I will use the release date as the anchor.');
+  } else {
+    explainCurrentSchedule();
+    return;
+  }
+  updateAndCalculate();
+  assistantAdd('coordinator', assistantQuestions[assistantStep].prompt);
+}
+
+function handleAssistantSend() {
+  const input = $('assistantInput');
+  const answer = (input.value || '').trim();
+  if (!answer) return;
+  input.value = '';
+  assistantAdd('user', answer);
+  const lower = answer.toLowerCase();
+  if (lower.includes('explain') || lower.includes('conflict') || lower.includes('why') || lower.includes('review')) {
+    explainCurrentSchedule();
+    return;
+  }
+  const q = assistantQuestions[assistantStep] || assistantQuestions[assistantQuestions.length - 1];
+  applyAssistantAnswer(q, answer);
+  assistantStep = Math.min(assistantStep + 1, assistantQuestions.length - 1);
+  updateAndCalculate();
+  const next = assistantQuestions[assistantStep];
+  if (assistantStep >= assistantQuestions.length - 1) {
+    assistantAdd('coordinator', 'I have the core scenario. Review the form fields, then Calculate, Export Excel, Export PDF, or Draft Email.');
+  } else {
+    assistantAdd('coordinator', next.prompt);
+  }
+}
+
+function applyAssistantAnswer(q, answer) {
+  if (!q || !q.field) return;
+  const lower = answer.toLowerCase();
+  if (q.allowSkip && /^(skip|none|no|n\/a)$/i.test(answer.trim())) {
+    assistantAdd('callout', 'Skipped. The field remains editable if you need to add it later.');
+    return;
+  }
+  if (q.hiatus) {
+    if (/^(none|no|skip|n\/a)$/i.test(answer.trim())) {
+      $('hiatusStart').value = '';
+      $('hiatusEnd').value = '';
+      assistantAdd('callout', 'No hiatus captured.');
+      return;
+    }
+    const dates = extractDates(answer);
+    if (dates[0]) $('hiatusStart').value = dates[0];
+    if (dates[1]) $('hiatusEnd').value = dates[1];
+    assistantAdd('callout', dates.length >= 2 ? `Captured hiatus ${dates[0]} to ${dates[1]}.` : 'I need two dates for hiatus; you can edit them in the form.');
+    return;
+  }
+  let value = answer;
+  if (q.number) {
+    const match = answer.match(/\d+/);
+    value = match ? match[0] : '';
+  }
+  if (q.normalize) value = normalizeDateInput(extractDates(answer)[0] || answer);
+  if (q.map) value = q.map(answer);
+  if (value !== undefined && value !== null && value !== '') {
+    $(q.field).value = value;
+    if (q.field === 'productionStart') markAnchor('production');
+    if (q.field === 'readyDate') markAnchor('ready');
+    assistantAdd('callout', `Captured ${fieldLabel(q.field)}: ${$(q.field).tagName === 'SELECT' ? $(q.field).selectedOptions[0].textContent : value}`);
+  } else {
+    assistantAdd('callout', 'I could not confidently capture that. The field remains editable in the form.');
+  }
+}
+
+function markAnchor(anchor) {
+  const s = loadState();
+  s.lastEditedAnchor = anchor;
+  saveState(s);
+}
+
+function extractDates(text) {
+  const matches = String(text).match(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b/g) || [];
+  return matches.map(normalizeDateInput);
+}
+
+function mapLocationAnswer(answer) {
+  const a = answer.toLowerCase();
+  if (a.includes('new york') || a === 'ny') return 'NY';
+  if (a.includes('canada') || a === 'ca') return 'CA';
+  if (a.includes('kingdom') || a.includes('uk') || a.includes('london')) return 'UK';
+  if (a.includes('mexico') || a === 'mx') return 'MX';
+  return 'US';
+}
+
+function mapAnchorAnswer(answer) {
+  const a = answer.toLowerCase();
+  if (a.includes('release') || a.includes('ready')) return 'ready';
+  if (a.includes('pre')) return 'pre';
+  if (a.includes('post')) return 'post';
+  if (a.includes('print')) return 'print_ship';
+  if (a.includes('travel')) return 'travel';
+  if (a.includes('hiatus')) return 'hiatus';
+  if (a.includes('r&d') || a.includes('research')) return 'rd';
+  return 'production';
+}
+
+function mapEmailAnswer(answer) {
+  const a = answer.toLowerCase();
+  if (a.includes('gmail')) return 'gmail';
+  if (a.includes('outlook') || a.includes('office') || a.includes('365')) return 'outlook';
+  return 'system';
+}
+
+function fieldLabel(field) {
+  const labels = {
+    projectTitle: 'project title', asOfDate: 'as-of date', productionLocation: 'location', anchorMode: 'anchor', productionStart: 'production start', productionDays: 'shoot days', preWeeks: 'pre-production weeks', postWeeks: 'post weeks', printShipWeeks: 'print & ship weeks', readyDate: 'ready date', emailProvider: 'email provider'
+  };
+  return labels[field] || field;
+}
+
+function explainCurrentSchedule() {
+  if (!lastSchedule) {
+    assistantAdd('coordinator', 'Calculate a schedule first, and I will explain the assumptions and conflicts.');
+    return;
+  }
+  const production = (lastSchedule.periods || []).find(p => p.key === 'production');
+  const holidayExt = production?.metric?.skippedHolidays || 0;
+  const pieces = [];
+  pieces.push(`Anchor: ${lastSchedule.anchorLabel || 'not set'}.`);
+  if (production) pieces.push(`Production runs ${production.displayStart} to ${production.displayEnd}; ${production.metric?.value || 0} shoot days, extended by ${holidayExt} holiday day${holidayExt === 1 ? '' : 's'}.`);
+  if (lastSchedule.ready?.displayDate) pieces.push(`Ready for Release: ${lastSchedule.ready.displayDate}.`);
+  if ((lastSchedule.warnings || []).length) pieces.push(`Needs review: ${lastSchedule.warnings.join(' ')}`);
+  assistantAdd('coordinator', pieces.join(' '));
 }
 
 async function loadServerInfo() {

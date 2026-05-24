@@ -93,3 +93,9 @@ Email Draft now includes direct signed Excel/PDF download links in the message b
 ## v1.3 default period settings
 
 Default production-period values are now Pre-Production = 12 weeks, Post Production = 26 weeks, and Print & Ship = 4 weeks. Existing browser-saved values that match prior shipped defaults are migrated automatically.
+
+## v1.4 UX test build
+
+This package includes the Apple-quality UX refresh for testing before replacing the live production interface. Deploy it to a separate Render web service or a test branch first if you want to compare against the current hosted version.
+
+Core functionality is preserved: schedule calculation, Excel export, PDF export, email draft with download links, team login, and PWA/Home Screen support.

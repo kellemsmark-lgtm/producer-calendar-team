@@ -1,12 +1,12 @@
 {
   "name": "Producer Calendar",
   "short_name": "ProducerCal",
-  "description": "Team production calendar generator with Excel, PDF, and email-link sharing.",
+  "description": "Production scheduling workspace with guided intake, calendar preview, Excel/PDF export, and email-link sharing.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f5f6fb",
-  "theme_color": "#f5f6fb",
+  "background_color": "#f6f4ef",
+  "theme_color": "#f6f4ef",
   "orientation": "any",
   "categories": ["business", "productivity"],
   "icons": [

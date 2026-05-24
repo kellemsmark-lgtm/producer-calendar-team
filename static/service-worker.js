@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v1-3-defaults';
+const CACHE_NAME = 'producer-calendar-static-v1-4-apple-polish-ai';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',
