@@ -489,6 +489,15 @@ def _apply_calendar_conditional_formatting(ws: Worksheet) -> None:
         fill=PERIOD_COLORS["hiatus"],
         stop=True,
     )
+    # Fixed Hiatus should visually override the underlying phase when it acts
+    # as an overlay/interruption inside Post or another downstream period.
+    _add_cf(
+        ws,
+        [combined],
+        '=AND(ISNUMBER(B13),WEEKDAY(B13,2)<=5,$AP$6=TRUE,$AL$6<>"",$AM$6<>"",B13>=$AL$6,B13<=$AM$6)',
+        fill=PERIOD_COLORS["hiatus"],
+        stop=True,
+    )
     # Period colors. Visual bands are weekday-only, matching the reference workbook.
     helper_rows = {"rd": 2, "pre": 3, "travel": 4, "production": 5, "hiatus": 6, "post": 7, "print_ship": 8}
     for key in ["rd", "pre", "travel", "production", "hiatus", "post", "print_ship"]:

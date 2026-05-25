@@ -24,6 +24,12 @@ PERIOD_ORDER = [
     "print_ship",
 ]
 
+# Hiatus is an overlay/interruption, not a scheduling handoff gate.
+# The connected production chain should move from one active production phase
+# to the next following Monday.
+PHASE_CHAIN_ORDER = ["rd", "pre", "travel", "production", "post", "print_ship"]
+BUILD_VERSION = "v1.8-dark-mode-handoff-verified"
+
 PERIOD_LABELS = {
     "rd": "R&D",
     "pre": "Pre-Production",
@@ -321,6 +327,20 @@ def next_weekday(d: date) -> date:
     return d
 
 
+def next_monday_after(d: date) -> date:
+    """Return the Monday after a completed phase.
+
+    Producer-calendar phase handoffs default to the following Monday, not the
+    next available weekday. This preserves the production-planning convention
+    requested during v1.5 testing: when a period ends mid-week, the next period
+    begins the next Monday by default.
+    """
+    days_until_monday = (7 - d.weekday()) % 7
+    if days_until_monday == 0:
+        days_until_monday = 7
+    return d + timedelta(days=days_until_monday)
+
+
 def prev_weekday(d: date) -> date:
     """Return d if it is Monday-Friday; otherwise the prior Friday."""
     while d.weekday() >= 5:
@@ -435,7 +455,10 @@ def _get_periods(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 
 def _weeks(periods: Dict[str, Dict[str, Any]], key: str, default: int = 0) -> int:
     try:
-        return int(periods.get(key, {}).get("weeks") or default)
+        value = periods.get(key, {}).get("weeks")
+        if value is None or value == "":
+            return default
+        return int(value)
     except Exception:
         return default
 
@@ -520,7 +543,14 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
     notes: List[str] = []
 
     # Durations.
-    weeks = {k: _weeks(periods, k, 0) for k in ["rd", "pre", "travel", "post", "print_ship"]}
+    week_defaults = {"rd": 0, "pre": 12, "travel": 0, "post": 26, "print_ship": 4}
+    weeks = {k: _weeks(periods, k, week_defaults[k]) for k in ["rd", "pre", "travel", "post", "print_ship"]}
+    # Guard against older browser state where these required default phases were
+    # saved as 0. R&D and Travel/Prep may legitimately be 0; Pre, Post, and
+    # Print & Ship default back to the production-planning assumptions.
+    for required_key in ["pre", "post", "print_ship"]:
+        if weeks.get(required_key, 0) <= 0:
+            weeks[required_key] = week_defaults[required_key]
     prod_days = _prod_days(periods, 0)
     h_start = _hiatus_start(periods)
     h_end = _hiatus_end(periods)
@@ -534,6 +564,14 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
     intervals: Dict[str, Tuple[Optional[date], Optional[date]]] = {k: (None, None) for k in PERIOD_ORDER}
     production_stats: Dict[str, Any] = {}
 
+    # Hiatus is always retained as a visible overlay/interruption. It does not
+    # break the default handoff between production phases. Example: if
+    # Production ends on Thu 12/03/26, Post starts Mon 12/07/26 even when a
+    # later Hiatus such as 12/20/26-01/02/27 is entered.
+    if h_start and h_end:
+        intervals["hiatus"] = (h_start, h_end)
+        notes.append("Hiatus is shown as an overlay/interruption; phase handoffs still continue on the following Monday by default.")
+
     def forward_calendar(key: str, start: date) -> date:
         # Week-based phases use 5-day work weeks (Monday-Friday). Holidays only
         # extend Production, not these supporting phases.
@@ -542,7 +580,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
             return next_weekday(start)
         s, e = add_weekdays(start, weeks[key] * 5)
         intervals[key] = (s, e)
-        return next_weekday(e + timedelta(days=1))
+        return next_monday_after(e)
 
     def backward_calendar(key: str, end: date) -> date:
         # Week-based phases use 5-day work weeks (Monday-Friday). Holidays only
@@ -567,7 +605,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         intervals["production"] = (adjusted_start, e)
         if production_stats.get("skippedHolidays", 0):
             notes.append(f"Production was automatically extended by {production_stats['skippedHolidays']} selected-location holiday day(s).")
-        return next_weekday(e + timedelta(days=1))
+        return next_monday_after(e)
 
     def backward_production(end: date) -> date:
         nonlocal production_stats
@@ -587,9 +625,29 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
     def set_hiatus_forward(next_start: date) -> date:
         if h_start and h_end:
             intervals["hiatus"] = (h_start, h_end)
-            if next_start > h_start:
-                warnings.append("The fixed Hiatus range overlaps or begins before the calculated preceding phase ends.")
-            return next_weekday(h_end + timedelta(days=1))
+            default_start = next_start
+
+            # A Hiatus entered later than the default handoff is treated as an
+            # overlay/break inside the downstream schedule rather than a gap
+            # that delays Post by default. This keeps the producer-calendar
+            # sequence continuous: when Production ends, the next phase begins
+            # on the following Monday unless the Hiatus itself is the anchor or
+            # begins exactly at that handoff.
+            if h_start == default_start:
+                return next_monday_after(h_end)
+            if h_start > default_start:
+                warnings.append(
+                    f"Hiatus starts {fmt(h_start)}, after the default handoff {fmt(default_start)}. "
+                    "The following phase begins on the default Monday and the hiatus is shown as an overlay; select Hiatus as the anchor if it should drive the schedule."
+                )
+                return default_start
+            if h_start < default_start <= h_end:
+                warnings.append("The fixed Hiatus range overlaps the default handoff, so the following phase starts after Hiatus.")
+                return next_monday_after(h_end)
+            # Hiatus has already ended before the handoff. Keep it visible, but
+            # do not delay the following phase.
+            warnings.append("The fixed Hiatus range ends before the calculated handoff; it is shown on the calendar but does not delay the next phase.")
+            return default_start
         intervals["hiatus"] = (None, None)
         return next_weekday(next_start)
 
@@ -609,6 +667,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         today = date.today()
         return {
             "ok": True,
+            "buildVersion": BUILD_VERSION,
             "needsInput": True,
             "message": "Enter a date into any period field or Ready for Release to create the calendar.",
             "projectTitle": payload.get("projectTitle") or "Feature Film",
@@ -633,7 +692,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         prev_end = prev_weekday(ready - timedelta(days=1))
         prev_end = backward_calendar("print_ship", prev_end)
         prev_end = backward_calendar("post", prev_end)
-        prev_end = set_hiatus_backward(prev_end)
+        # Hiatus does not gate the schedule; it remains an overlay.
         prev_end = backward_production(prev_end)
         prev_end = backward_calendar("travel", prev_end)
         prev_end = backward_calendar("pre", prev_end)
@@ -646,52 +705,72 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not h_end:
             h_end = h_start
         intervals["hiatus"] = (h_start, h_end)
-        # Before hiatus.
-        prev_end = h_start - timedelta(days=1)
-        prev_end = backward_production(prev_end)
-        prev_end = backward_calendar("travel", prev_end)
-        prev_end = backward_calendar("pre", prev_end)
-        backward_calendar("rd", prev_end)
-        # After hiatus.
-        next_start = next_weekday(h_end + timedelta(days=1))
-        next_start = forward_calendar("post", next_start)
-        next_start = forward_calendar("print_ship", next_start)
-        ready = ready or next_start
+        warnings.append("Hiatus is treated as an overlay/interruption, not as a gate between phases. Use Production start or Ready for Release as the anchor to build the connected schedule.")
+        ready = ready or next_monday_after(h_end)
     else:
-        start = _start(periods, anchor)
-        if not start:
-            start = date.today()
-            warnings.append(f"{PERIOD_LABELS[anchor]} is selected as anchor, but no date is entered; using today temporarily.")
-        # Calculate anchor and forward side.
-        idx = PERIOD_ORDER.index(anchor)
-        if anchor in ["rd", "pre", "travel", "post", "print_ship"]:
-            next_start = forward_calendar(anchor, start)
-        elif anchor == "production":
-            next_start = forward_production(start)
+        if anchor not in PHASE_CHAIN_ORDER:
+            warnings.append(f"{PERIOD_LABELS.get(anchor, anchor)} is not a connected phase anchor; using Production start when available.")
+            anchor = "production" if _start(periods, "production") else "ready"
+        if anchor == "ready":
+            # Fallback if the substitution above chooses ready.
+            if not ready:
+                ready = date.today()
+            prev_end = prev_weekday(ready - timedelta(days=1))
+            prev_end = backward_calendar("print_ship", prev_end)
+            prev_end = backward_calendar("post", prev_end)
+            prev_end = backward_production(prev_end)
+            prev_end = backward_calendar("travel", prev_end)
+            prev_end = backward_calendar("pre", prev_end)
+            backward_calendar("rd", prev_end)
         else:
-            next_start = start
-        # Forward phases after anchor.
-        for key in PERIOD_ORDER[idx + 1:]:
-            if key == "hiatus":
-                next_start = set_hiatus_forward(next_start)
-            elif key == "production":
-                next_start = forward_production(next_start)
+            start = _start(periods, anchor)
+            if not start:
+                start = date.today()
+                warnings.append(f"{PERIOD_LABELS[anchor]} is selected as anchor, but no date is entered; using today temporarily.")
+            # Calculate anchor and forward side. Hiatus is not in the chain; it
+            # is drawn as an overlay so it cannot suppress Post.
+            idx = PHASE_CHAIN_ORDER.index(anchor)
+            if anchor in ["rd", "pre", "travel", "post", "print_ship"]:
+                next_start = forward_calendar(anchor, start)
+            elif anchor == "production":
+                next_start = forward_production(start)
             else:
-                next_start = forward_calendar(key, next_start)
-        ready = ready or next_start
-        # Backward phases before anchor.
-        prev_end = prev_weekday(start - timedelta(days=1))
-        for key in reversed(PERIOD_ORDER[:idx]):
-            if key == "hiatus":
-                prev_end = set_hiatus_backward(prev_end)
-            elif key == "production":
-                prev_end = backward_production(prev_end)
-            else:
-                prev_end = backward_calendar(key, prev_end)
+                next_start = start
+            # Forward phases after anchor.
+            for key in PHASE_CHAIN_ORDER[idx + 1:]:
+                if key == "production":
+                    next_start = forward_production(next_start)
+                else:
+                    next_start = forward_calendar(key, next_start)
+            ready = ready or next_start
+            # Backward phases before anchor.
+            prev_end = prev_weekday(start - timedelta(days=1))
+            for key in reversed(PHASE_CHAIN_ORDER[:idx]):
+                if key == "production":
+                    prev_end = backward_production(prev_end)
+                else:
+                    prev_end = backward_calendar(key, prev_end)
 
     # If the anchor was before hiatus and a fixed hiatus was not specified, preserve blank hiatus.
     if not (h_start and h_end) and intervals.get("hiatus") == (None, None):
         pass
+
+    # Final handoff safety net: for any forward production-start scenario,
+    # ensure Post exists and starts on the Monday after Production. This guards
+    # against stale browser state and makes the rule auditable in the response.
+    prod_s, prod_e = intervals.get("production", (None, None))
+    post_s, post_e = intervals.get("post", (None, None))
+    if prod_e and weeks.get("post", 0) > 0 and not (post_s and post_e) and anchor not in {"ready", "post", "print_ship"}:
+        s_post, e_post = add_weekdays(next_monday_after(prod_e), weeks["post"] * 5)
+        intervals["post"] = (s_post, e_post)
+        next_start = next_monday_after(e_post)
+        if weeks.get("print_ship", 0) > 0:
+            s_print, e_print = add_weekdays(next_start, weeks["print_ship"] * 5)
+            intervals["print_ship"] = (s_print, e_print)
+            ready = ready or next_monday_after(e_print)
+        else:
+            ready = ready or next_start
+        notes.append(f"Default handoff applied: Post Production begins {fmt(s_post)}, the Monday after Production ends {fmt(prod_e)}.")
 
     # Create period records.
     period_records: List[Dict[str, Any]] = []
@@ -783,6 +862,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
+        "buildVersion": BUILD_VERSION,
         "needsInput": False,
         "projectTitle": payload.get("projectTitle") or "Feature Film",
         "anchor": anchor,

@@ -39,6 +39,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
+BUILD_VERSION = "v1.8-dark-mode-handoff-verified"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -493,7 +494,7 @@ def application(environ: dict[str, Any], start_response: Callable):
     method = environ.get("REQUEST_METHOD", "GET").upper()
 
     if path == "/healthz":
-        return _json_response(start_response, 200, {"ok": True, "app": APP_NAME})
+        return _json_response(start_response, 200, {"ok": True, "app": APP_NAME, "buildVersion": BUILD_VERSION})
 
     if path.startswith("/static/"):
         return _serve_static(start_response, path)
@@ -559,6 +560,7 @@ def application(environ: dict[str, Any], start_response: Callable):
             "appName": APP_NAME,
             "username": user,
             "message": "Hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.",
+            "buildVersion": BUILD_VERSION,
         })
 
     if path.startswith("/api/") and method == "POST":

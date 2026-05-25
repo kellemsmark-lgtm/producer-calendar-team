@@ -99,3 +99,15 @@ Default production-period values are now Pre-Production = 12 weeks, Post Product
 This package includes the Apple-quality UX refresh for testing before replacing the live production interface. Deploy it to a separate Render web service or a test branch first if you want to compare against the current hosted version.
 
 Core functionality is preserved: schedule calculation, Excel export, PDF export, email draft with download links, team login, and PWA/Home Screen support.
+
+## v1.7 Monday handoff update
+
+- Forward schedule handoffs now default to the following Monday after a phase ends.
+- If Production ends mid-week, Post Production begins on the next Monday by default.
+- A fixed Hiatus that begins later than the default handoff is shown as an overlay/interruption rather than creating a hidden gap that delays the next phase. Select Hiatus as the scheduling anchor if the hiatus range should drive the sequence.
+- The Assistant now explains the Monday-handoff assumption during guided intake.
+
+
+## v1.7 Force Default Durations
+
+Pre-Production, Post Production, and Print & Ship now force their production-planning defaults when old browser state supplies blank or zero values. This ensures Post Production begins on the following Monday after Production ends, even during Assistant intake, unless a user explicitly anchors a different phase.

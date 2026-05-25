@@ -494,3 +494,159 @@ input:focus, select:focus {
   .calendar-grid { grid-template-columns: repeat(4, 1fr); gap: 10px; }
   @page { size: landscape; margin: .25in; }
 }
+
+/* v1.8 Dark Mode + deployment verification polish */
+.build-badge {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 7px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(10,132,255,.10);
+  color: var(--blue-strong);
+  border: 1px solid rgba(10,132,255,.16);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .01em;
+}
+.icon-button {
+  min-width: 58px;
+  padding-inline: 12px;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101014;
+  --surface: rgba(34,34,38,.72);
+  --surface-solid: #1c1c20;
+  --surface-soft: rgba(28,28,32,.92);
+  --ink: #f5f5f7;
+  --ink-2: #e2e2e7;
+  --muted: #a1a1aa;
+  --muted-2: #7f7f87;
+  --line: rgba(235,235,245,.14);
+  --line-strong: rgba(235,235,245,.24);
+  --blue: #0a84ff;
+  --blue-strong: #64aaff;
+  --warning: #ffd08a;
+  --danger: #ff6961;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px rgba(0,0,0,.28);
+  --shadow-md: 0 24px 70px rgba(0,0,0,.38);
+}
+
+html[data-theme="dark"] body {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0) 34%),
+    radial-gradient(circle at 0% 0%, rgba(10,132,255,.14), transparent 30rem),
+    radial-gradient(circle at 100% 0%, rgba(112,173,71,.10), transparent 28rem),
+    var(--bg);
+}
+html[data-theme="dark"] .topbar,
+html[data-theme="dark"] .side-panel,
+html[data-theme="dark"] .panel-card,
+html[data-theme="dark"] .calendar-panel,
+html[data-theme="dark"] .reasoning-card,
+html[data-theme="dark"] .scenario-panel,
+html[data-theme="dark"] .export-panel,
+html[data-theme="dark"] .stat-card,
+html[data-theme="dark"] .assistant-log,
+html[data-theme="dark"] .assistant-message.coordinator,
+html[data-theme="dark"] .assistant-message.user,
+html[data-theme="dark"] .assistant-message.callout,
+html[data-theme="dark"] .summary-item,
+html[data-theme="dark"] .holiday-table,
+html[data-theme="dark"] .scenario-metric {
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: var(--shadow-sm);
+}
+html[data-theme="dark"] .topbar,
+html[data-theme="dark"] .side-panel {
+  border-color: rgba(235,235,245,.16);
+}
+html[data-theme="dark"] .mode-switch,
+html[data-theme="dark"] .phase-strip button,
+html[data-theme="dark"] .button.soft,
+html[data-theme="dark"] .chip-button {
+  background: rgba(118,118,128,.20);
+  border-color: var(--line);
+}
+html[data-theme="dark"] .mode-button.active,
+html[data-theme="dark"] .phase-strip button.active,
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] .button {
+  background: rgba(44,44,48,.95);
+  color: var(--ink);
+  border-color: var(--line);
+}
+html[data-theme="dark"] input:focus,
+html[data-theme="dark"] select:focus {
+  background: #24242a;
+  border-color: rgba(100,170,255,.68);
+  box-shadow: 0 0 0 4px rgba(10,132,255,.20), inset 0 1px 1px rgba(0,0,0,.12);
+}
+html[data-theme="dark"] .button.primary {
+  color: white;
+  background: linear-gradient(180deg, #0a84ff, #0066cc);
+}
+html[data-theme="dark"] .calendar-toolbar,
+html[data-theme="dark"] .preview-ledger,
+html[data-theme="dark"] .messages,
+html[data-theme="dark"] .holiday-list {
+  color: var(--ink);
+}
+html[data-theme="dark"] .month {
+  background: rgba(28,28,32,.86);
+  border-color: var(--line);
+}
+html[data-theme="dark"] .month-title {
+  background: #0f275d;
+  color: #fff;
+}
+html[data-theme="dark"] .weekdays {
+  background: rgba(255,255,255,.08);
+  color: var(--muted);
+  border-color: var(--line);
+}
+html[data-theme="dark"] .day {
+  background: rgba(255,255,255,.04);
+  color: var(--ink);
+  border-color: rgba(235,235,245,.14);
+}
+html[data-theme="dark"] .day.empty,
+html[data-theme="dark"] .day.weekend:not(.has-data) {
+  background: rgba(255,255,255,.025);
+  color: var(--muted-2);
+}
+html[data-theme="dark"] .day.has-data {
+  color: #101014;
+}
+html[data-theme="dark"] .day.ready {
+  color: #fff;
+}
+html[data-theme="dark"] .holiday-table th,
+html[data-theme="dark"] .holiday-table td {
+  border-color: var(--line);
+}
+html[data-theme="dark"] .message.warn {
+  background: rgba(255,159,10,.12);
+  border-color: rgba(255,159,10,.26);
+  color: #ffd08a;
+}
+html[data-theme="dark"] .message.note {
+  background: rgba(48,209,88,.10);
+  border-color: rgba(48,209,88,.24);
+  color: #c6f6d5;
+}
+html[data-theme="dark"] .message.info {
+  background: rgba(10,132,255,.12);
+  border-color: rgba(10,132,255,.24);
+  color: #cde5ff;
+}
+html[data-theme="dark"] .build-badge {
+  background: rgba(100,170,255,.16);
+  color: #b9dcff;
+  border-color: rgba(100,170,255,.22);
+}

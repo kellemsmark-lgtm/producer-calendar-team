@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Producer Calendar">
-  <meta name="theme-color" content="#f6f4ef">
+  <meta name="theme-color" content="#f6f4ef" id="themeColorMeta">
   <title>Producer Calendar</title>
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
@@ -20,7 +20,7 @@
         <div class="brand-copy">
           <div class="eyebrow">Producer Calendar</div>
           <h1 id="pageTitle">Feature Film</h1>
-          <div class="subline" id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</div>
+          <div class="subline"><span id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</span> <span id="buildBadge" class="build-badge">v1.8</span></div>
         </div>
       </div>
 
@@ -35,6 +35,7 @@
         <button id="excelBtn" class="button">Excel</button>
         <button id="pdfBtn" class="button">PDF</button>
         <button id="emailBtn" class="button">Email</button>
+        <button id="themeToggle" class="button icon-button" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">Dark</button>
         <a class="logout-link" href="/logout">Sign Out</a>
       </div>
     </header>

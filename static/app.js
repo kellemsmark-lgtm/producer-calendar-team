@@ -11,7 +11,9 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v1.4-apple-polish-ai';
+const currentDefaultsVersion = 'v1.8-dark-mode-handoff-verified';
+const buildVersion = 'v1.8-dark-mode-handoff-verified';
+const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
 let timer = null;
@@ -50,8 +52,9 @@ function loadState() {
 }
 
 function migrateDefaultWeeks(state) {
-  // v1.3 default update: Pre-Production 12 weeks, Post Production 26 weeks, Print & Ship 4 weeks.
-  // Preserve custom user-entered values, but upgrade prior shipped defaults from older builds.
+  // v1.7 production-planning defaults: these phases are core schedule assumptions.
+  // Force prior blank/zero saved values back to defaults so old browser state cannot
+  // suppress Post Production or Print & Ship during Assistant intake.
   try {
     if (localStorage.getItem(defaultsVersionKey) === currentDefaultsVersion) return state;
     state.periods = state.periods || {};
@@ -59,9 +62,9 @@ function migrateDefaultWeeks(state) {
     state.periods.post = state.periods.post || {};
     state.periods.print_ship = state.periods.print_ship || {};
 
-    if (state.periods.pre.weeks === undefined || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
-    if (state.periods.post.weeks === undefined || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
-    if (state.periods.print_ship.weeks === undefined || Number(state.periods.print_ship.weeks) === 2) state.periods.print_ship.weeks = 4;
+    if (state.periods.pre.weeks === undefined || state.periods.pre.weeks === '' || Number(state.periods.pre.weeks) <= 0 || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
+    if (state.periods.post.weeks === undefined || state.periods.post.weeks === '' || Number(state.periods.post.weeks) <= 0 || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
+    if (state.periods.print_ship.weeks === undefined || state.periods.print_ship.weeks === '' || Number(state.periods.print_ship.weeks) <= 0 || Number(state.periods.print_ship.weeks) === 2) state.periods.print_ship.weeks = 4;
 
     localStorage.setItem(defaultsVersionKey, currentDefaultsVersion);
     localStorage.setItem(stateKey, JSON.stringify(state));
@@ -86,6 +89,30 @@ function deepMerge(target, source) {
   return target;
 }
 
+function valueOrDefault(value, fallback) {
+  return value === undefined || value === null || value === '' ? fallback : value;
+}
+
+function valueOrPositiveDefault(value, fallback) {
+  const n = Number(value);
+  return value === undefined || value === null || value === '' || !Number.isFinite(n) || n <= 0 ? fallback : value;
+}
+
+function durationOrDefault(id, fallback) {
+  const value = $(id)?.value;
+  const n = Number(value);
+  return !Number.isFinite(n) || n <= 0 ? fallback : n;
+}
+
+function ensureTimelineDefaultsInForm() {
+  // Keep professional defaults available during Assistant intake before the
+  // coordinator asks every duration question. A user can still override these
+  // in Form mode, including setting 0 deliberately.
+  if ($('preWeeks') && (String($('preWeeks').value).trim() === '' || Number($('preWeeks').value) <= 0)) $('preWeeks').value = '12';
+  if ($('postWeeks') && (String($('postWeeks').value).trim() === '' || Number($('postWeeks').value) <= 0)) $('postWeeks').value = '26';
+  if ($('printShipWeeks') && (String($('printShipWeeks').value).trim() === '' || Number($('printShipWeeks').value) <= 0)) $('printShipWeeks').value = '4';
+}
+
 function normalizeDateInput(value) {
   value = (value || '').trim();
   if (!value) return '';
@@ -93,6 +120,65 @@ function normalizeDateInput(value) {
   if (digits.length === 6) return `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(4,6)}`;
   if (digits.length === 8) return `${digits.slice(0,2)}/${digits.slice(2,4)}/${digits.slice(6,8)}`;
   return value;
+}
+
+
+function preferredTheme() {
+  const stored = localStorage.getItem(themeKey);
+  if (stored === 'dark' || stored === 'light') return stored;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+  const normalized = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = normalized;
+  document.documentElement.style.colorScheme = normalized;
+  const meta = $('themeColorMeta');
+  if (meta) meta.setAttribute('content', normalized === 'dark' ? '#101014' : '#f6f4ef');
+  const toggle = $('themeToggle');
+  if (toggle) {
+    toggle.textContent = normalized === 'dark' ? 'Light' : 'Dark';
+    toggle.setAttribute('aria-label', normalized === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+  }
+}
+
+function initTheme() {
+  applyTheme(preferredTheme());
+  const toggle = $('themeToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      localStorage.setItem(themeKey, next);
+      applyTheme(next);
+    });
+  }
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+      if (!localStorage.getItem(themeKey)) applyTheme(preferredTheme());
+    });
+  }
+}
+
+function syncCalculatedStartsToForm(data) {
+  // Keep the form aligned with the calculated schedule. This makes the Monday
+  // handoff visible after Assistant intake, even if the user never manually
+  // opens the Post tab. Only blank fields are filled; explicit user-entered
+  // dates are left editable and unchanged.
+  const fieldFor = { rd: 'rdStart', pre: 'preStart', travel: 'travelStart', production: 'productionStart', post: 'postStart', print_ship: 'printShipStart' };
+  for (const period of data.periods || []) {
+    const fieldId = fieldFor[period.key];
+    if (!fieldId || !$(fieldId)) continue;
+    if (!String($(fieldId).value || '').trim() && period.displayStart) {
+      $(fieldId).value = period.displayStart;
+    }
+  }
+  const post = (data.periods || []).find(p => p.key === 'post');
+  if (post && $('postStart')) {
+    $('postStart').placeholder = post.displayStart || 'mm/dd/yy';
+  }
+  if (data.ready?.displayDate && $('readyDate') && !String($('readyDate').value || '').trim()) {
+    $('readyDate').placeholder = data.ready.displayDate;
+  }
 }
 
 function buildCoordinatorSummary() {
@@ -108,6 +194,7 @@ function buildCoordinatorSummary() {
 }
 
 function payloadFromForm() {
+  ensureTimelineDefaultsInForm();
   return {
     projectTitle: $('projectTitle').value || 'Feature Film',
     asOfDate: $('asOfDate').value,
@@ -118,12 +205,12 @@ function payloadFromForm() {
     lastEditedAnchor: loadState().lastEditedAnchor || 'production',
     periods: {
       rd: { start: $('rdStart').value, weeks: Number($('rdWeeks').value || 0) },
-      pre: { start: $('preStart').value, weeks: Number($('preWeeks').value || 0) },
+      pre: { start: $('preStart').value, weeks: durationOrDefault('preWeeks', 12) },
       travel: { start: $('travelStart').value, weeks: Number($('travelWeeks').value || 0) },
       production: { start: $('productionStart').value, days: Number($('productionDays').value || 0) },
       hiatus: { start: $('hiatusStart').value, end: $('hiatusEnd').value },
-      post: { start: $('postStart').value, weeks: Number($('postWeeks').value || 0) },
-      print_ship: { start: $('printShipStart').value, weeks: Number($('printShipWeeks').value || 0) },
+      post: { start: $('postStart').value, weeks: durationOrDefault('postWeeks', 26) },
+      print_ship: { start: $('printShipStart').value, weeks: durationOrDefault('printShipWeeks', 4) },
       ready: { date: $('readyDate').value }
     }
   };
@@ -138,7 +225,7 @@ function setFormFromState(s) {
   $('rdStart').value = s.periods.rd.start || '';
   $('rdWeeks').value = s.periods.rd.weeks ?? 0;
   $('preStart').value = s.periods.pre.start || '';
-  $('preWeeks').value = s.periods.pre.weeks ?? 12;
+  $('preWeeks').value = valueOrPositiveDefault(s.periods.pre.weeks, 12);
   $('travelStart').value = s.periods.travel.start || '';
   $('travelWeeks').value = s.periods.travel.weeks ?? 0;
   $('productionStart').value = s.periods.production.start || '';
@@ -146,9 +233,9 @@ function setFormFromState(s) {
   $('hiatusStart').value = s.periods.hiatus.start || '';
   $('hiatusEnd').value = s.periods.hiatus.end || '';
   $('postStart').value = s.periods.post.start || '';
-  $('postWeeks').value = s.periods.post.weeks ?? 26;
+  $('postWeeks').value = valueOrPositiveDefault(s.periods.post.weeks, 26);
   $('printShipStart').value = s.periods.print_ship.start || '';
-  $('printShipWeeks').value = s.periods.print_ship.weeks ?? 4;
+  $('printShipWeeks').value = valueOrPositiveDefault(s.periods.print_ship.weeks, 4);
   $('readyDate').value = s.periods.ready.date || '';
 }
 
@@ -188,10 +275,12 @@ function setBusy(busy) {
 }
 
 function renderSchedule(data) {
+  syncCalculatedStartsToForm(data);
+  if ($('buildBadge')) $('buildBadge').textContent = data.buildVersion || buildVersion;
   const projectTitle = data.projectTitle || 'Feature Film';
   $('pageTitle').textContent = projectTitle;
   $('calendarTitle').textContent = `${projectTitle} Calendar`;
-  $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays extend Production. All phases use Monday-Friday workweeks.`;
+  $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays extend Production. Phases use Monday-Friday workweeks and hand off on the following Monday by default.`;
   renderMessages(data);
   renderReasoning(data);
   renderYearChips(data);
@@ -246,7 +335,7 @@ function renderStats(data) {
   const years = (data.years || []).join(' - ') || '—';
   const shootDays = production?.metric?.value ?? Number($('productionDays').value || 0);
   const holidayExt = production?.metric?.skippedHolidays ?? 0;
-  const postWeeks = post?.metric?.value ?? Number($('postWeeks').value || 0);
+  const postWeeks = post?.metric?.value ?? durationOrDefault('postWeeks', 26);
   const cards = [
     ['Ready', ready.displayDate || 'Not set', 'Release milestone'],
     ['Shoot days', shootDays ? `${shootDays}` : '0', `${holidayExt} holiday extension day${holidayExt === 1 ? '' : 's'}`],
@@ -310,6 +399,16 @@ function renderCalendar(data, year) {
   });
 }
 
+function displayKeyForDay(keys, holidays) {
+  // Priority is visual, not chronological: Ready > Hiatus/Holiday override > phase color.
+  // Hiatus remains visible as an interruption even when it overlays Post, and
+  // selected-location holidays override Production color.
+  if (keys.includes('hiatus')) return 'hiatus';
+  if (keys.includes('production') && (holidays || []).length) return 'hiatus';
+  const priority = ['print_ship', 'post', 'production', 'travel', 'pre', 'rd'];
+  return priority.find(key => keys.includes(key)) || keys[keys.length - 1];
+}
+
 function renderMonth(year, monthIndex, rowsByDate) {
   const monthName = new Date(year, monthIndex, 1).toLocaleString(undefined, { month: 'long' });
   const first = new Date(year, monthIndex, 1);
@@ -328,18 +427,19 @@ function renderMonth(year, monthIndex, rowsByDate) {
     const productionNonWork = keys.includes('production') && !row.isProductionWorkday;
     let bg = '';
     let mini = '';
+    let displayKey = '';
     if (ready) {
       bg = '#000000';
       mini = 'READY';
     } else if (keys.length) {
-      const key = keys[keys.length - 1];
-      bg = periodMeta[key]?.color || '#fff';
+      displayKey = displayKeyForDay(keys, holidays);
+      bg = periodMeta[displayKey]?.color || '#fff';
       mini = keys.map(k => periodMeta[k]?.label || k).join(' / ');
     } else if (holidays.length) {
       bg = '#d9ead3';
       mini = holidays[0];
     }
-    const textColor = ready ? 'white' : (keys.length ? periodMeta[keys[keys.length - 1]]?.text : '');
+    const textColor = ready ? 'white' : (displayKey ? periodMeta[displayKey]?.text : '');
     const style = bg ? ` style="background:${bg};${textColor ? `color:${textColor};` : ''}"` : '';
     const aria = hasData ? `${row.displayDate || iso}: ${(row.periodLabels || []).concat(holidays).concat(ready ? ['Ready for Release'] : []).join(', ')}` : `${monthName} ${d}, ${year}`;
     cells += `<div class="day ${weekend ? 'weekend' : ''} ${hasData ? 'has-data' : ''} ${ready ? 'ready' : ''} ${productionNonWork ? 'production-nonwork' : ''}" data-date="${iso}" ${hasData ? 'role="button" tabindex="0"' : ''} aria-label="${escapeHtml(aria)}"${style}>
@@ -517,6 +617,7 @@ function bindInputs() {
     if (!confirm('Reset this calendar?')) return;
     localStorage.removeItem(stateKey);
     localStorage.removeItem('producerCalendarTeamHostedStateV1');
+    localStorage.removeItem(defaultsVersionKey);
     setFormFromState(structuredClone(defaults));
     activeYear = null;
     updateAndCalculate();
@@ -582,7 +683,7 @@ const assistantQuestions = [
   { key: 'productionStart', prompt: 'What is the Production start date? Use mm/dd/yy. Type skip if you are anchoring by release.', field: 'productionStart', normalize: true, allowSkip: true },
   { key: 'productionDays', prompt: 'How many Production shoot days? Default is 45. Weekends are excluded.', field: 'productionDays', number: true },
   { key: 'preWeeks', prompt: 'How many weeks of Pre-Production? Default is 12.', field: 'preWeeks', number: true },
-  { key: 'hiatus', prompt: 'Any single hiatus range? Say none, or enter start and end dates like 12/20/26 to 01/02/27.', field: 'hiatus', hiatus: true },
+  { key: 'hiatus', prompt: 'Any single hiatus range? Say none, or enter start and end dates like 12/20/26 to 01/02/27. The next phase still begins the Monday after the previous period; hiatus is shown as an overlay and does not suppress Post.', field: 'hiatus', hiatus: true },
   { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
   { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
   { key: 'readyDate', prompt: 'What is the Ready for Release date? Use mm/dd/yy if known.', field: 'readyDate', normalize: true },
@@ -594,7 +695,7 @@ function initAssistant() {
   const input = $('assistantInput');
   if (!send || !input) return;
   assistantStep = 0;
-  assistantAdd('coordinator', 'I can guide intake without replacing the form. Answer in short phrases; I will populate the structured fields and keep everything editable.');
+  assistantAdd('coordinator', 'I can guide intake without replacing the form. Answer in short phrases; I will populate the structured fields and keep everything editable. Phase handoffs default to the following Monday; Hiatus is an overlay, not a gate.');
   assistantAdd('coordinator', assistantQuestions[assistantStep].prompt);
   send.addEventListener('click', handleAssistantSend);
   input.addEventListener('keydown', event => { if (event.key === 'Enter') handleAssistantSend(); });
@@ -671,7 +772,7 @@ function applyAssistantAnswer(q, answer) {
     const dates = extractDates(answer);
     if (dates[0]) $('hiatusStart').value = dates[0];
     if (dates[1]) $('hiatusEnd').value = dates[1];
-    assistantAdd('callout', dates.length >= 2 ? `Captured hiatus ${dates[0]} to ${dates[1]}.` : 'I need two dates for hiatus; you can edit them in the form.');
+    assistantAdd('callout', dates.length >= 2 ? `Captured hiatus ${dates[0]} to ${dates[1]}. Post will still begin on the Monday after Production by default; the hiatus will overlay that downstream schedule.` : 'I need two dates for hiatus; you can edit them in the form.');
     return;
   }
   let value = answer;
@@ -756,14 +857,16 @@ async function loadServerInfo() {
   try {
     const res = await fetch('/api/info');
     const data = await res.json();
-    $('serverInfo').textContent = data.message || 'Secure hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.';
+    $('serverInfo').textContent = data.message || 'Secure hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.'; if ($('buildBadge')) $('buildBadge').textContent = data.buildVersion || buildVersion;
   } catch (e) {
     $('serverInfo').textContent = 'Secure hosted app is running.';
   }
 }
 
 function boot() {
+  initTheme();
   setFormFromState(loadState());
+  ensureTimelineDefaultsInForm();
   initTabs();
   bindInputs();
   loadServerInfo();
