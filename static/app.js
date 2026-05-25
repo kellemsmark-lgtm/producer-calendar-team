@@ -11,8 +11,8 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v1.8-dark-mode-handoff-verified';
-const buildVersion = 'v1.8-dark-mode-handoff-verified';
+const currentDefaultsVersion = 'v1.9-dark-uniform-polish';
+const buildVersion = 'v1.9-dark-uniform-polish';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;

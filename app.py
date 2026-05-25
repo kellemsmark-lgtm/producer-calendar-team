@@ -39,7 +39,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v1.8-dark-mode-handoff-verified"
+BUILD_VERSION = "v1.9-dark-uniform-polish"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}

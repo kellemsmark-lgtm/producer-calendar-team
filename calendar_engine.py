@@ -28,7 +28,7 @@ PERIOD_ORDER = [
 # The connected production chain should move from one active production phase
 # to the next following Monday.
 PHASE_CHAIN_ORDER = ["rd", "pre", "travel", "production", "post", "print_ship"]
-BUILD_VERSION = "v1.8-dark-mode-handoff-verified"
+BUILD_VERSION = "v1.9-dark-uniform-polish"
 
 PERIOD_LABELS = {
     "rd": "R&D",

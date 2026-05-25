@@ -650,3 +650,203 @@ html[data-theme="dark"] .build-badge {
   color: #b9dcff;
   border-color: rgba(100,170,255,.22);
 }
+
+/* v1.9 Dark Uniform Polish
+   Dark mode now uses one cohesive elevated surface system. The intent is to keep
+   the premium dark cards used in Live Schedule Preview and remove the lighter
+   gray contrast blocks from reasoning, summary, schedule input, year chips, and
+   scenario sections. */
+html[data-theme="dark"] {
+  --bg: #111115;
+  --surface: rgba(31,31,35,.84);
+  --surface-solid: #202126;
+  --surface-soft: rgba(36,36,40,.92);
+  --dark-card: rgba(35,35,39,.94);
+  --dark-card-2: rgba(40,40,45,.96);
+  --dark-card-hover: rgba(47,47,53,.98);
+  --dark-line: rgba(235,235,245,.14);
+  --dark-line-strong: rgba(235,235,245,.22);
+}
+
+html[data-theme="dark"] body {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0) 32%),
+    radial-gradient(circle at 0% 0%, rgba(10,132,255,.09), transparent 32rem),
+    var(--bg);
+}
+
+/* Primary shells */
+html[data-theme="dark"] .topbar,
+html[data-theme="dark"] .side-panel,
+html[data-theme="dark"] .calendar-panel {
+  background: rgba(28,28,32,.88);
+  border-color: rgba(235,235,245,.15);
+  box-shadow: 0 1px 1px rgba(255,255,255,.035) inset, 0 18px 46px rgba(0,0,0,.34);
+}
+
+/* Section containers: keep dark, not gray cards */
+html[data-theme="dark"] .panel-card,
+html[data-theme="dark"] .project-card,
+html[data-theme="dark"] .periods-card,
+html[data-theme="dark"] .assistant-card,
+html[data-theme="dark"] .summary-card,
+html[data-theme="dark"] .detail-card,
+html[data-theme="dark"] .reasoning-card,
+html[data-theme="dark"] .scenario-panel,
+html[data-theme="dark"] .export-panel,
+html[data-theme="dark"] .toolbar-content,
+html[data-theme="dark"] .assistant-log,
+html[data-theme="dark"] .summary-meta,
+html[data-theme="dark"] .summary-list,
+html[data-theme="dark"] .phase-legend,
+html[data-theme="dark"] .holiday-table {
+  background: rgba(35,35,39,.72);
+  border-color: var(--dark-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 8px 20px rgba(0,0,0,.16);
+}
+
+/* Inner information cards should match the Ready / Shoot Days / Post blocks. */
+html[data-theme="dark"] .stat-card,
+html[data-theme="dark"] .reasoning-item,
+html[data-theme="dark"] .scenario-metric,
+html[data-theme="dark"] .summary-meta-row,
+html[data-theme="dark"] .summary-item,
+html[data-theme="dark"] .assistant-message.coordinator,
+html[data-theme="dark"] .assistant-message.callout,
+html[data-theme="dark"] .assistant-message.user {
+  background: var(--dark-card);
+  border: 1px solid var(--dark-line);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 6px 16px rgba(0,0,0,.16);
+}
+
+html[data-theme="dark"] .reasoning-item strong,
+html[data-theme="dark"] .scenario-metric strong,
+html[data-theme="dark"] .summary-meta-row strong,
+html[data-theme="dark"] .summary-title,
+html[data-theme="dark"] .stat-value {
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .reasoning-item,
+html[data-theme="dark"] .scenario-metric,
+html[data-theme="dark"] .summary-item,
+html[data-theme="dark"] .summary-meta-row {
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+
+html[data-theme="dark"] .reasoning-item:hover,
+html[data-theme="dark"] .scenario-metric:hover,
+html[data-theme="dark"] .summary-item:hover {
+  background: var(--dark-card-hover);
+  border-color: var(--dark-line-strong);
+}
+
+/* Schedule input block */
+html[data-theme="dark"] .phase-strip button,
+html[data-theme="dark"] .chip-button,
+html[data-theme="dark"] .button.soft,
+html[data-theme="dark"] .year-chips button {
+  background: rgba(42,42,47,.86);
+  color: var(--muted);
+  border-color: var(--dark-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+}
+html[data-theme="dark"] .phase-strip button.active,
+html[data-theme="dark"] .year-chips button.active,
+html[data-theme="dark"] .mode-button.active {
+  background: rgba(54,54,60,.95);
+  color: var(--ink);
+  border-color: var(--dark-line-strong);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 20px rgba(0,0,0,.22);
+}
+html[data-theme="dark"] .year-chips button:not(.active) {
+  opacity: .82;
+}
+
+/* Inputs should sit in the same dark system, with clear focus. */
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background: rgba(45,45,50,.96);
+  color: var(--ink);
+  border-color: rgba(235,235,245,.18);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045);
+}
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder { color: rgba(235,235,245,.45); }
+html[data-theme="dark"] input:focus,
+html[data-theme="dark"] select:focus,
+html[data-theme="dark"] textarea:focus {
+  background: rgba(48,48,54,.98);
+  border-color: rgba(100,170,255,.70);
+  box-shadow: 0 0 0 4px rgba(10,132,255,.20), inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+/* Assistant: retain message hierarchy without introducing light panels. */
+html[data-theme="dark"] .assistant-message.user {
+  background: rgba(10,132,255,.18);
+  border-color: rgba(100,170,255,.24);
+  color: #dbeeff;
+}
+html[data-theme="dark"] .assistant-message.callout {
+  background: rgba(255,159,10,.13);
+  border-color: rgba(255,159,10,.30);
+  color: #ffe3b1;
+}
+
+/* Semantic notices remain colored, but dark and restrained. */
+html[data-theme="dark"] .message {
+  background: rgba(35,35,39,.88);
+  border-color: var(--dark-line);
+  color: var(--ink-2);
+}
+html[data-theme="dark"] .message.note {
+  background: rgba(48,209,88,.10);
+  border-color: rgba(48,209,88,.24);
+  color: #c9f7d8;
+}
+html[data-theme="dark"] .message.info {
+  background: rgba(10,132,255,.12);
+  border-color: rgba(10,132,255,.25);
+  color: #d4eaff;
+}
+html[data-theme="dark"] .message.warn {
+  background: rgba(255,159,10,.12);
+  border-color: rgba(255,159,10,.26);
+  color: #ffdca2;
+}
+
+/* Month grid dark treatment */
+html[data-theme="dark"] .month {
+  background: rgba(30,30,34,.9);
+  border-color: var(--dark-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.045), 0 8px 20px rgba(0,0,0,.16);
+}
+html[data-theme="dark"] .weekdays div {
+  background: rgba(34,34,38,.96);
+  color: var(--muted);
+  border-color: var(--dark-line);
+}
+html[data-theme="dark"] .day {
+  background: rgba(26,26,30,.92);
+  border-color: rgba(235,235,245,.13);
+}
+html[data-theme="dark"] .day.empty,
+html[data-theme="dark"] .day.weekend:not(.has-data) {
+  background: rgba(255,255,255,.03);
+  color: rgba(235,235,245,.46);
+}
+
+/* Legend and labels should not turn into a gray callout block. */
+html[data-theme="dark"] .phase-legend {
+  background: rgba(35,35,39,.86);
+}
+html[data-theme="dark"] .legend-chip { color: var(--ink-2); }
+
+html[data-theme="dark"] .section-badge.muted {
+  background: rgba(235,235,245,.10);
+  color: var(--muted);
+}
+html[data-theme="dark"] .text-button { color: #9acaff; }
+

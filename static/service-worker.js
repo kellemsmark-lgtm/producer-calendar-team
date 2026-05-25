@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v1-8-dark-mode-handoff-verified';
+const CACHE_NAME = 'producer-calendar-static-v1-9-dark-uniform-polish';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',
