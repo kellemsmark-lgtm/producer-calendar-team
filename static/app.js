@@ -12,8 +12,8 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v2.1-ready-friday-audit';
-const buildVersion = 'v2.1-ready-friday-audit';
+const currentDefaultsVersion = 'v2.2-outlook-app-email';
+const buildVersion = 'v2.2-outlook-app-email';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
@@ -64,7 +64,7 @@ function migrateDefaultWeeks(state) {
     state.periods.post = state.periods.post || {};
     state.periods.print_ship = state.periods.print_ship || {};
     if (!Array.isArray(state.customRanges)) state.customRanges = [];
-    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail') state.emailProvider = 'apple_mail';
+    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail' || state.emailProvider === 'outlook_web' || state.emailProvider === 'office365') state.emailProvider = 'apple_mail';
 
     if (state.periods.pre.weeks === undefined || state.periods.pre.weeks === '' || Number(state.periods.pre.weeks) <= 0 || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
     if (state.periods.post.weeks === undefined || state.periods.post.weeks === '' || Number(state.periods.post.weeks) <= 0 || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
@@ -206,7 +206,7 @@ function emailProviderControls() {
 
 function normalizeEmailProvider(value) {
   const v = String(value || '').toLowerCase();
-  if (v.includes('outlook') || v.includes('office') || v === 'outlook') return 'outlook';
+  if (v.includes('outlook') || v.includes('office') || v === 'outlook' || v === 'outlook_app') return 'outlook_app';
   return 'apple_mail';
 }
 
@@ -665,6 +665,33 @@ async function exportFile(endpoint, expectedExt) {
   }
 }
 
+function launchEmailClient(data) {
+  const primary = data.emailUrl || data.mailto;
+  const fallback = data.fallbackEmailUrl || data.mailto;
+  if (!primary) return;
+
+  // Outlook App uses a native deep link on iPhone/iPad where available. If the
+  // app/scheme is not available, fall back to mailto so the system default mail
+  // app can still draft the message. On Mac, setting Outlook as the default mail
+  // reader makes this fallback open Outlook desktop.
+  if (data.emailLaunchMode === 'outlook_app' && primary.startsWith('ms-outlook://')) {
+    let didHide = false;
+    const onVisibility = () => { if (document.hidden) didHide = true; };
+    document.addEventListener('visibilitychange', onVisibility, { once: true });
+    window.location.href = primary;
+    window.setTimeout(() => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (!didHide && fallback && fallback !== primary) {
+        showTransient('If Outlook did not open, using your default mail app as a fallback. Set Outlook as the default email app on this device for best results.');
+        window.location.href = fallback;
+      }
+    }, 1200);
+    return;
+  }
+
+  window.location.href = primary;
+}
+
 async function emailDraft() {
   const payload = payloadFromForm();
   payload.lastEditedAnchor = loadState().lastEditedAnchor || 'production';
@@ -677,8 +704,9 @@ async function emailDraft() {
     const links = [];
     if (data.excel?.shareUrl || data.excel?.downloadUrl) links.push(`<a href="${data.excel.shareUrl || data.excel.downloadUrl}" target="_blank" rel="noopener">Excel link</a>`);
     if (data.pdf?.shareUrl || data.pdf?.downloadUrl) links.push(`<a href="${data.pdf.shareUrl || data.pdf.downloadUrl}" target="_blank" rel="noopener">PDF link</a>`);
-    showTransient((data.message || 'Email draft created.') + (links.length ? ' ' + links.join(' | ') : ''));
-    if (data.emailUrl || data.mailto) window.location.href = data.emailUrl || data.mailto;
+    const clientLabel = data.emailLaunchMode === 'outlook_app' ? 'Outlook app' : 'Apple Mail / default mail app';
+    showTransient((data.message || 'Email draft created.') + ` Opening ${clientLabel}.` + (links.length ? ' ' + links.join(' | ') : ''));
+    launchEmailClient(data);
   } catch (e) {
     showTransient(e.message, true);
   } finally {
@@ -796,7 +824,7 @@ const assistantQuestions = [
   { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
   { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
   { key: 'readyDate', prompt: 'Ready for Release defaults to the last Friday inside Print & Ship. Enter a release date only if you want to override it, or type skip.', field: 'readyDate', normalize: true, allowSkip: true },
-  { key: 'emailProvider', prompt: 'Which email client should the draft use: Apple Mail or Outlook?', field: 'emailProvider', map: mapEmailAnswer }
+  { key: 'emailProvider', prompt: 'Which email client should the draft use: Apple Mail or the Outlook app?', field: 'emailProvider', map: mapEmailAnswer }
 ];
 
 function initAssistant() {
@@ -936,7 +964,7 @@ function mapAnchorAnswer(answer) {
 
 function mapEmailAnswer(answer) {
   const a = answer.toLowerCase();
-  if (a.includes('outlook') || a.includes('office') || a.includes('365')) return 'outlook';
+  if (a.includes('outlook') || a.includes('office') || a.includes('365')) return 'outlook_app';
   return 'apple_mail';
 }
 

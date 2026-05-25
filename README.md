@@ -116,3 +116,8 @@ Pre-Production, Post Production, and Print & Ship now force their production-pla
 ## v2.1 Ready Friday + Audit
 
 Ready for Release defaults to the last Friday inside Print & Ship. Static assets revalidate faster during UX testing.
+
+
+## v2.2 Outlook App Email
+
+The Outlook email option now attempts to open the installed Outlook app rather than Outlook Web. If the device/browser cannot open Outlook directly, the flow falls back to the system mail handler. For Mac desktop users who want Outlook, set Outlook as the default email reader in macOS. For iPhone/iPad users, set Outlook as the default email app in iOS/iPadOS Settings.

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v2-1-ready-friday-audit';
+const CACHE_NAME = 'producer-calendar-static-v2-2-outlook-app-email';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',
