@@ -12,8 +12,8 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v2.2-outlook-app-email';
-const buildVersion = 'v2.2-outlook-app-email';
+const currentDefaultsVersion = 'v2.3-outlook-default-stable-email';
+const buildVersion = 'v2.3-outlook-default-stable-email';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
@@ -26,7 +26,7 @@ const defaults = {
   asOfDate: '',
   productionLocation: 'US',
   anchorMode: 'auto',
-  emailProvider: 'apple_mail',
+  emailProvider: 'outlook_app',
   lastEditedAnchor: 'production',
   periods: {
     rd: { start: '', weeks: 0 },
@@ -64,7 +64,7 @@ function migrateDefaultWeeks(state) {
     state.periods.post = state.periods.post || {};
     state.periods.print_ship = state.periods.print_ship || {};
     if (!Array.isArray(state.customRanges)) state.customRanges = [];
-    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail' || state.emailProvider === 'outlook_web' || state.emailProvider === 'office365') state.emailProvider = 'apple_mail';
+    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail' || state.emailProvider === 'outlook_web' || state.emailProvider === 'office365' || state.emailProvider === 'apple_mail') state.emailProvider = 'outlook_app';
 
     if (state.periods.pre.weeks === undefined || state.periods.pre.weeks === '' || Number(state.periods.pre.weeks) <= 0 || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
     if (state.periods.post.weeks === undefined || state.periods.post.weeks === '' || Number(state.periods.post.weeks) <= 0 || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
@@ -211,7 +211,7 @@ function normalizeEmailProvider(value) {
 }
 
 function getEmailProviderValue() {
-  return normalizeEmailProvider(($('emailProviderTop') || $('emailProvider') || {}).value || 'apple_mail');
+  return normalizeEmailProvider(($('emailProviderTop') || $('emailProvider') || {}).value || 'outlook_app');
 }
 
 function setEmailProviderValue(value) {
@@ -253,7 +253,7 @@ function setFormFromState(s) {
   $('asOfDate').value = s.asOfDate || '';
   $('productionLocation').value = s.productionLocation || 'US';
   $('anchorMode').value = s.anchorMode || 'auto';
-  setEmailProviderValue(s.emailProvider || 'apple_mail');
+  setEmailProviderValue(s.emailProvider || 'outlook_app');
   $('rdStart').value = s.periods.rd.start || '';
   $('rdWeeks').value = s.periods.rd.weeks ?? 0;
   $('preStart').value = s.periods.pre.start || '';
@@ -665,31 +665,43 @@ async function exportFile(endpoint, expectedExt) {
   }
 }
 
-function launchEmailClient(data) {
-  const primary = data.emailUrl || data.mailto;
-  const fallback = data.fallbackEmailUrl || data.mailto;
-  if (!primary) return;
+function isLikelyMobileAppleDevice() {
+  const ua = navigator.userAgent || '';
+  return /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
 
-  // Outlook App uses a native deep link on iPhone/iPad where available. If the
-  // app/scheme is not available, fall back to mailto so the system default mail
-  // app can still draft the message. On Mac, setting Outlook as the default mail
-  // reader makes this fallback open Outlook desktop.
-  if (data.emailLaunchMode === 'outlook_app' && primary.startsWith('ms-outlook://')) {
+function launchEmailClient(data) {
+  const provider = getEmailProviderValue();
+  const mailto = data.mailto || data.fallbackEmailUrl || data.emailUrl;
+  const outlookMobile = data.outlookMobileUrl || data.emailUrl;
+  if (!mailto && !outlookMobile) return;
+
+  // Reliable rule:
+  // - Mac/desktop: use mailto. That opens Outlook when Outlook is set as the
+  //   device's default email reader, and avoids the failed temp/web Outlook flow.
+  // - iPhone/iPad: try Outlook's app scheme only when Outlook App is selected;
+  //   fall back to the system mailto handler so the user still gets a draft.
+  // The app's own default is Outlook App, but the operating system still owns
+  // which native client handles mailto links.
+  if (provider === 'outlook_app' && isLikelyMobileAppleDevice() && outlookMobile && outlookMobile.startsWith('ms-outlook://')) {
     let didHide = false;
     const onVisibility = () => { if (document.hidden) didHide = true; };
     document.addEventListener('visibilitychange', onVisibility, { once: true });
-    window.location.href = primary;
+    window.location.href = outlookMobile;
     window.setTimeout(() => {
       document.removeEventListener('visibilitychange', onVisibility);
-      if (!didHide && fallback && fallback !== primary) {
-        showTransient('If Outlook did not open, using your default mail app as a fallback. Set Outlook as the default email app on this device for best results.');
-        window.location.href = fallback;
+      if (!didHide && mailto) {
+        showTransient('Outlook did not open directly. Opening the device email handler instead. Set Outlook as your default email app to keep this in Outlook.');
+        window.location.href = mailto;
       }
-    }, 1200);
+    }, 900);
     return;
   }
 
-  window.location.href = primary;
+  if (provider === 'outlook_app') {
+    showTransient('Opening Outlook through the system email handler. Make Outlook your default email app on this device for this option to open Outlook.');
+  }
+  window.location.href = mailto || outlookMobile;
 }
 
 async function emailDraft() {
@@ -704,7 +716,7 @@ async function emailDraft() {
     const links = [];
     if (data.excel?.shareUrl || data.excel?.downloadUrl) links.push(`<a href="${data.excel.shareUrl || data.excel.downloadUrl}" target="_blank" rel="noopener">Excel link</a>`);
     if (data.pdf?.shareUrl || data.pdf?.downloadUrl) links.push(`<a href="${data.pdf.shareUrl || data.pdf.downloadUrl}" target="_blank" rel="noopener">PDF link</a>`);
-    const clientLabel = data.emailLaunchMode === 'outlook_app' ? 'Outlook app' : 'Apple Mail / default mail app';
+    const clientLabel = getEmailProviderValue() === 'outlook_app' ? 'Outlook app' : 'Apple Mail / default mail app';
     showTransient((data.message || 'Email draft created.') + ` Opening ${clientLabel}.` + (links.length ? ' ' + links.join(' | ') : ''));
     launchEmailClient(data);
   } catch (e) {
@@ -824,7 +836,7 @@ const assistantQuestions = [
   { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
   { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
   { key: 'readyDate', prompt: 'Ready for Release defaults to the last Friday inside Print & Ship. Enter a release date only if you want to override it, or type skip.', field: 'readyDate', normalize: true, allowSkip: true },
-  { key: 'emailProvider', prompt: 'Which email client should the draft use: Apple Mail or the Outlook app?', field: 'emailProvider', map: mapEmailAnswer }
+  { key: 'emailProvider', prompt: 'Which email client should the draft use? Outlook App is the default, or say Apple Mail if needed.', field: 'emailProvider', map: mapEmailAnswer }
 ];
 
 function initAssistant() {

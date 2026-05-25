@@ -39,7 +39,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v2.2-outlook-app-email"
+BUILD_VERSION = "v2.3-outlook-default-stable-email"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -392,37 +392,34 @@ def _serve_export(start_response: Callable, path: str):
 def _mailto_url(subject: str, body: str) -> str:
     """Build a standards-based mailto compose link.
 
-    Browser apps cannot guarantee attachments in a compose draft, so the body
-    includes time-limited download links. Percent-encoding is used so clients do
-    not display plus signs in place of spaces.
+    Browser/PWA apps cannot guarantee native attachments in a compose draft, so
+    the body includes time-limited download links. Percent-encoding is used so
+    clients do not display plus signs in place of spaces.
     """
     return "mailto:?" + urlencode({"subject": subject, "body": body}, quote_via=quote)
 
 
 def _outlook_app_url(subject: str, body: str) -> str:
-    """Build a best-effort native Outlook compose deep link.
+    """Build a best-effort Outlook mobile compose deep link.
 
-    Outlook mobile registers the ms-outlook:// URL scheme on iPhone/iPad. On
-    Mac, browser-to-app launching is less consistent; the frontend falls back to
-    the mailto handler, which opens Outlook when Outlook is the default email
-    reader.
+    This is used only as an iPhone/iPad convenience. Desktop/Mac uses mailto so
+    the installed default email app handles the draft reliably.
     """
-    return "ms-outlook://compose?" + urlencode({"subject": subject, "body": body}, quote_via=quote)
+    return "ms-outlook://compose?" + urlencode({"to": "", "subject": subject, "body": body}, quote_via=quote)
 
 
 def _build_email_url(provider: str, subject: str, body: str) -> dict[str, str]:
     """Build provider-specific compose URLs.
 
-    Apple Mail uses the platform mailto handler. Outlook App uses the native
-    Outlook scheme first, then the frontend can fall back to mailto when the
-    scheme is not available. Outlook Web is intentionally no longer used for the
-    normal Outlook choice.
+    Outlook is now the app's default email preference. The reliable compose path
+    for desktop browsers is still mailto, which opens Outlook when Outlook is the
+    device's default email app. Outlook Web is intentionally not used.
     """
-    provider = (provider or "apple_mail").lower()
+    provider = (provider or "outlook_app").lower()
     mailto = _mailto_url(subject, body)
     if provider in {"outlook", "outlook_app", "outlook_native"}:
-        return {"primary": _outlook_app_url(subject, body), "fallback": mailto, "kind": "outlook_app"}
-    return {"primary": mailto, "fallback": mailto, "kind": "apple_mail"}
+        return {"primary": mailto, "fallback": mailto, "mobile": _outlook_app_url(subject, body), "kind": "outlook_app"}
+    return {"primary": mailto, "fallback": mailto, "mobile": "", "kind": "apple_mail"}
 
 
 def _api(environ: dict[str, Any], start_response: Callable, path: str):
@@ -494,13 +491,15 @@ def _api(environ: dict[str, Any], start_response: Callable, path: str):
                 f"PDF: {pdf_link}\n\n"
                 "Links expire in 7 days. Attachments are not inserted by the browser email draft; download and attach the files if you want physical attachments.\n"
             )
-            email_urls = _build_email_url(payload.get("emailProvider") or "apple_mail", subject, body)
+            email_urls = _build_email_url(payload.get("emailProvider") or "outlook_app", subject, body)
             return _json_response(start_response, 200, {
                 "ok": True,
                 "provider": email_urls.get("kind"),
                 "emailUrl": email_urls.get("primary"),
                 "fallbackEmailUrl": email_urls.get("fallback"),
                 "emailLaunchMode": email_urls.get("kind"),
+                "mailto": email_urls.get("fallback"),
+                "outlookMobileUrl": email_urls.get("mobile"),
                 "excel": {"filename": xlsx.name, "downloadUrl": f"/exports/{xlsx.name}", "shareUrl": excel_link},
                 "pdf": {"filename": result_pdf.name, "downloadUrl": f"/exports/{result_pdf.name}", "shareUrl": pdf_link},
                 "message": "Exports created. The email draft includes direct Excel and PDF download links.",
