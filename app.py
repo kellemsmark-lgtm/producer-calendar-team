@@ -41,7 +41,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v2.6-team-share-options"
+BUILD_VERSION = "v2.7-login-hardening"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -133,38 +133,94 @@ def _verify_password(stored_hash: str, password: str) -> bool:
         return False
 
 
+def _parse_users_json(raw: str, var_name: str) -> dict[str, str]:
+    """Parse a users JSON object without allowing a bad env var to crash Render."""
+    text = (raw or "").strip()
+    if not text:
+        return {}
+    attempts = [text]
+    normalized = (
+        text.replace("\u201c", '"')
+            .replace("\u201d", '"')
+            .replace("\u2018", "'")
+            .replace("\u2019", "'")
+    )
+    if normalized != text:
+        attempts.append(normalized)
+
+    last_error: Exception | None = None
+    for candidate in attempts:
+        try:
+            parsed = json.loads(candidate)
+            if not isinstance(parsed, dict):
+                raise ValueError(f"{var_name} must be a JSON object like {'{'}\"user\":\"password\"{'}'}")
+            clean: dict[str, str] = {}
+            for username, password in parsed.items():
+                username_s = str(username).strip()
+                password_s = str(password)
+                if username_s and password_s:
+                    clean[username_s] = password_s
+            if clean:
+                return clean
+        except Exception as exc:
+            last_error = exc
+    print(f"WARNING: {var_name} could not be parsed and was ignored: {last_error}", flush=True)
+    return {}
+
+
+def _parse_users_simple(raw: str) -> dict[str, str]:
+    """Parse an easier non-JSON fallback: user=password;user2=password2 or user:password,user2:password2."""
+    text = (raw or "").strip()
+    users: dict[str, str] = {}
+    if not text:
+        return users
+    for pair in text.replace("\n", ";").split(";"):
+        for sub_pair in pair.split(","):
+            item = sub_pair.strip()
+            if not item:
+                continue
+            if "=" in item:
+                username, password = item.split("=", 1)
+            elif ":" in item:
+                username, password = item.split(":", 1)
+            else:
+                continue
+            username = username.strip()
+            password = password.strip()
+            if username and password:
+                users[username] = password
+    return users
+
+
 def _load_users() -> tuple[dict[str, str], bool]:
     """Return username -> password hash and whether app is using fallback credentials.
 
-    Preferred production config:
+    Production options, in priority order:
+        CALENDAR_PASSWORD_HASHES_JSON='{"andy.davis":"pbkdf2_hash", ...}'
         CALENDAR_USERS_JSON='{"andy.davis":"strong password","team.member":"another password"}'
-    or:
-        CALENDAR_USERNAME='andy.davis'
-        CALENDAR_PASSWORD='strong password'
+        CALENDAR_USERS='andy.davis=strong password;team.member=another password'
+        CALENDAR_USERNAME / CALENDAR_PASSWORD
+
+    A malformed CALENDAR_USERS_JSON now logs a warning and falls back instead of
+    crashing the Render worker.
     """
-    users: dict[str, str] = {}
     hashes = os.environ.get("CALENDAR_PASSWORD_HASHES_JSON")
     if hashes:
-        parsed = json.loads(hashes)
-        return {str(k): str(v) for k, v in parsed.items()}, False
+        parsed_hashes = _parse_users_json(hashes, "CALENDAR_PASSWORD_HASHES_JSON")
+        if parsed_hashes:
+            return {str(k): str(v) for k, v in parsed_hashes.items()}, False
 
     users_json = os.environ.get("CALENDAR_USERS_JSON")
     if users_json:
-        parsed = json.loads(users_json)
-        for username, password in parsed.items():
-            users[str(username)] = _hash_password(str(password))
-        return users, False
+        parsed_users = _parse_users_json(users_json, "CALENDAR_USERS_JSON")
+        if parsed_users:
+            return {username: _hash_password(password) for username, password in parsed_users.items()}, False
 
     users_simple = os.environ.get("CALENDAR_USERS")
     if users_simple:
-        # Format: username:password,another.user:another-password
-        for pair in users_simple.split(","):
-            if not pair.strip() or ":" not in pair:
-                continue
-            username, password = pair.split(":", 1)
-            users[username.strip()] = _hash_password(password.strip())
-        if users:
-            return users, False
+        parsed_simple = _parse_users_simple(users_simple)
+        if parsed_simple:
+            return {username: _hash_password(password) for username, password in parsed_simple.items()}, False
 
     username = os.environ.get("CALENDAR_USERNAME")
     password = os.environ.get("CALENDAR_PASSWORD")
@@ -173,7 +229,6 @@ def _load_users() -> tuple[dict[str, str], bool]:
 
     # Development-only fallback so the container can be smoke tested.
     return {"demo": _hash_password("change-me-now")}, True
-
 
 USERS, USING_FALLBACK_LOGIN = _load_users()
 

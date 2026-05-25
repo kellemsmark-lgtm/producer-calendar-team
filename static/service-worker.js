@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v2-6-team-share-options';
+const CACHE_NAME = 'producer-calendar-static-v2-7-login-hardening';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',
