@@ -111,3 +111,8 @@ Core functionality is preserved: schedule calculation, Excel export, PDF export,
 ## v1.7 Force Default Durations
 
 Pre-Production, Post Production, and Print & Ship now force their production-planning defaults when old browser state supplies blank or zero values. This ensures Post Production begins on the following Monday after Production ends, even during Assistant intake, unless a user explicitly anchors a different phase.
+
+
+## v2.1 Ready Friday + Audit
+
+Ready for Release defaults to the last Friday inside Print & Ship. Static assets revalidate faster during UX testing.

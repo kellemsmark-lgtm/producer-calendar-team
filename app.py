@@ -39,7 +39,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v2.0-day-overrides-email-client"
+BUILD_VERSION = "v2.1-ready-friday-audit"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -366,8 +366,9 @@ def _serve_static(start_response: Callable, path: str):
     if not target.exists() or not target.is_file():
         return _response(start_response, 404, b"Not found")
     ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-    # Static files may be cached; app HTML/API/exports are not cached.
-    cache_headers = [("Cache-Control", "public, max-age=3600")]
+    # Keep UX-test deployments responsive. Static files are revalidated on each
+    # request so Render/iPhone/iPad users do not stay on an older cached build.
+    cache_headers = [("Cache-Control", "no-cache, max-age=0, must-revalidate")]
     return _response(start_response, 200, target.read_bytes(), ctype, cache_headers, no_store=False)
 
 

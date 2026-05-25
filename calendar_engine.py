@@ -28,7 +28,7 @@ PERIOD_ORDER = [
 # The connected production chain should move from one active production phase
 # to the next following Monday.
 PHASE_CHAIN_ORDER = ["rd", "pre", "travel", "production", "post", "print_ship"]
-BUILD_VERSION = "v2.0-day-overrides-email-client"
+BUILD_VERSION = "v2.1-ready-friday-audit"
 
 PERIOD_LABELS = {
     "rd": "R&D",
@@ -341,6 +341,30 @@ def next_monday_after(d: date) -> date:
     if days_until_monday == 0:
         days_until_monday = 7
     return d + timedelta(days=days_until_monday)
+
+
+def last_friday_in_range(start: Optional[date], end: Optional[date]) -> Optional[date]:
+    """Return the last Friday inside a date range.
+
+    Ready for Release defaults to the last Friday within Print & Ship. With the
+    standard 4-week Print & Ship phase this is the 4th Friday; if Print & Ship
+    is changed to 3 weeks, 5 weeks, or any other duration, it becomes the final
+    Friday inside that period.
+    """
+    if not start or not end or end < start:
+        return None
+    cur = end
+    while cur >= start:
+        if cur.weekday() == 4:  # Friday
+            return cur
+        cur -= timedelta(days=1)
+    return None
+
+
+def default_ready_from_print_ship(intervals: Dict[str, Tuple[Optional[date], Optional[date]]]) -> Optional[date]:
+    """Default release milestone derived from Print & Ship."""
+    ps_start, ps_end = intervals.get("print_ship", (None, None))
+    return last_friday_in_range(ps_start, ps_end)
 
 
 def prev_weekday(d: date) -> date:
@@ -740,7 +764,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
             warnings.append("Ready for Release is selected as anchor, but no date is entered.")
             ready = date.today()
         # Work backwards from the release milestone. Print & Ship ends the day before release.
-        prev_end = prev_weekday(ready - timedelta(days=1))
+        prev_end = prev_weekday(ready)
         prev_end = backward_calendar("print_ship", prev_end)
         prev_end = backward_calendar("post", prev_end)
         # Hiatus does not gate the schedule; it remains an overlay.
@@ -766,7 +790,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
             # Fallback if the substitution above chooses ready.
             if not ready:
                 ready = date.today()
-            prev_end = prev_weekday(ready - timedelta(days=1))
+            prev_end = prev_weekday(ready)
             prev_end = backward_calendar("print_ship", prev_end)
             prev_end = backward_calendar("post", prev_end)
             prev_end = backward_production(prev_end)
@@ -793,7 +817,11 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
                     next_start = forward_production(next_start)
                 else:
                     next_start = forward_calendar(key, next_start)
-            ready = ready or next_start
+            default_ready = default_ready_from_print_ship(intervals)
+            if not ready:
+                ready = default_ready or next_start
+                if default_ready:
+                    notes.append(f"Ready for Release defaults to {fmt(default_ready)}, the last Friday inside Print & Ship.")
             # Backward phases before anchor.
             prev_end = prev_weekday(start - timedelta(days=1))
             for key in reversed(PHASE_CHAIN_ORDER[:idx]):
@@ -818,7 +846,9 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         if weeks.get("print_ship", 0) > 0:
             s_print, e_print = add_weekdays(next_start, weeks["print_ship"] * 5)
             intervals["print_ship"] = (s_print, e_print)
-            ready = ready or next_monday_after(e_print)
+            default_ready = last_friday_in_range(s_print, e_print)
+            if not ready:
+                ready = default_ready or e_print
         else:
             ready = ready or next_start
         notes.append(f"Default handoff applied: Post Production begins {fmt(s_post)}, the Monday after Production ends {fmt(prod_e)}.")

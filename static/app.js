@@ -12,8 +12,8 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v2.0-day-overrides-email-client';
-const buildVersion = 'v2.0-day-overrides-email-client';
+const currentDefaultsVersion = 'v2.1-ready-friday-audit';
+const buildVersion = 'v2.1-ready-friday-audit';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
@@ -335,23 +335,6 @@ function renderMessages(data) {
   $('messages').innerHTML = messages.join('');
 }
 
-function renderReasoning(data) {
-  const production = (data.periods || []).find(p => p.key === 'production');
-  const ready = data.ready || {};
-  const holidayExt = production?.metric?.skippedHolidays || 0;
-  const notes = [];
-  if (data.anchorLabel) notes.push(['Anchor', data.anchorLabel]);
-  if (production) notes.push(['Production logic', `${production.metric?.value || 0} shoot days on Monday-Friday${holidayExt ? `, extended by ${holidayExt} selected-location holiday day${holidayExt === 1 ? '' : 's'}` : ', with no holiday extension currently applied'}.`]);
-  if (ready.displayDate) notes.push(['Release target', `Ready for Release is ${ready.displayDate}.`]);
-  for (const n of data.notes || []) notes.push(['Assumption', n]);
-  for (const w of data.warnings || []) notes.push(['Needs review', w]);
-  if (!notes.length) notes.push(['Ready', 'Enter an anchor date or ask the assistant to begin a scenario.']);
-  const limited = notes.slice(0, 6);
-  const panel = $('reasoningPanel');
-  const status = $('reasoningStatus');
-  if (panel) panel.innerHTML = limited.map(([title, body]) => `<div class="reasoning-item"><strong>${escapeHtml(title)}</strong>${escapeHtml(body)}</div>`).join('');
-  if (status) status.textContent = data.needsInput ? 'Awaiting inputs' : `${limited.length} schedule note${limited.length === 1 ? '' : 's'}`;
-}
 
 function renderYearChips(data) {
   const years = data.years || [new Date().getFullYear()];
@@ -800,34 +783,6 @@ function initModes() {
   setMode('form', false);
 }
 
-function displayDateForScenario(schedule) {
-  return schedule?.ready?.displayDate || 'Not set';
-}
-
-function captureScenario() {
-  if (!lastSchedule) return showTransient('Calculate a schedule before capturing Scenario A.', true);
-  baselineScenario = structuredClone(lastSchedule);
-  showTransient('Captured Scenario A. Change inputs, then choose Compare.');
-  compareScenario();
-}
-
-function compareScenario() {
-  const target = $('scenarioCompare');
-  if (!target) return;
-  if (!baselineScenario || !lastSchedule) {
-    target.textContent = 'Capture Scenario A from the left rail, then adjust inputs to compare.';
-    return;
-  }
-  const baseProd = (baselineScenario.periods || []).find(p => p.key === 'production');
-  const currProd = (lastSchedule.periods || []).find(p => p.key === 'production');
-  const rows = [
-    ['Ready', `${displayDateForScenario(baselineScenario)} → ${displayDateForScenario(lastSchedule)}`],
-    ['Production', `${baseProd?.displayStart || '—'} → ${currProd?.displayStart || '—'}`],
-    ['Shoot days', `${baseProd?.metric?.value ?? 0} → ${currProd?.metric?.value ?? 0}`],
-    ['Holiday extension', `${baseProd?.metric?.skippedHolidays ?? 0} → ${currProd?.metric?.skippedHolidays ?? 0}`]
-  ];
-  target.innerHTML = `<div class="scenario-grid">${rows.map(([label, value]) => `<div class="scenario-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>`;
-}
 
 const assistantQuestions = [
   { key: 'projectTitle', prompt: 'What is the project title?', field: 'projectTitle' },
@@ -840,7 +795,7 @@ const assistantQuestions = [
   { key: 'hiatus', prompt: 'Any single hiatus range? Say none, or enter start and end dates like 12/20/26 to 01/02/27. The next phase still begins the Monday after the previous period; hiatus is shown as an overlay and does not suppress Post.', field: 'hiatus', hiatus: true },
   { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
   { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
-  { key: 'readyDate', prompt: 'What is the Ready for Release date? Use mm/dd/yy if known.', field: 'readyDate', normalize: true },
+  { key: 'readyDate', prompt: 'Ready for Release defaults to the last Friday inside Print & Ship. Enter a release date only if you want to override it, or type skip.', field: 'readyDate', normalize: true, allowSkip: true },
   { key: 'emailProvider', prompt: 'Which email client should the draft use: Apple Mail or Outlook?', field: 'emailProvider', map: mapEmailAnswer }
 ];
 

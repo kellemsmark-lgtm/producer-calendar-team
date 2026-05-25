@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v2-0-day-overrides-email-client';
+const CACHE_NAME = 'producer-calendar-static-v2-1-ready-friday-audit';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',

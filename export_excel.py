@@ -165,8 +165,11 @@ def _make_inputs_sheet(wb, schedule: Dict[str, Any], payload: Dict[str, Any]) ->
     location_code = schedule.get("productionLocation") or "US"
     location_label = schedule.get("productionLocationLabel") or LOCATION_LABELS.get(location_code, "United States")
     recs = _record_by_key(schedule)
-    ready = schedule.get("ready") or {}
-    ready_date = _date_value(ready.get("date"))
+    # This field is an optional user override only. Do not write the calculated
+    # Ready date here, otherwise exported Excel files cannot continue to
+    # recalculate Ready from Print & Ship when the duration changes.
+    ready_payload = ((payload.get("periods") or {}).get("ready") or {})
+    ready_date = _date_value(ready_payload.get("date"))
 
     ws["A1"] = "Producer Calendar Inputs"
     ws["A1"].font = _font("FFFFFF", True, 16)
@@ -317,8 +320,12 @@ def _make_schedule_data_sheet(wb, schedule: Dict[str, Any], payload: Dict[str, A
         ws.cell(r, 1, key)
         ws.cell(r, 2, PERIOD_LABELS[key])
         if key == "ready":
-            # If an override is entered, use it; otherwise calculate release as the day after Print & Ship.
-            ws.cell(r, 3, '=IF(Inputs!$B$6<>"",Inputs!$B$6,IF(Inputs!$E$15<>"",Inputs!$E$15+1,""))')
+            # If an override is entered, use it. Otherwise Ready for Release
+            # defaults to the last Friday inside the Print & Ship period. With
+            # the default 4-week Print & Ship, this is the 4th Friday. If Print
+            # & Ship is changed to 3 weeks, 5 weeks, or any other duration, it
+            # becomes the final Friday within that period.
+            ws.cell(r, 3, '=IF(Inputs!$B$6<>"",Inputs!$B$6,IF(AND(Inputs!$B$15<>"",Inputs!$E$15<>""),Inputs!$E$15-MOD(WEEKDAY(Inputs!$E$15,2)-5,7),""))')
             ws.cell(r, 4, f"=C{r}")
             ws.cell(r, 5, "")
             ws.cell(r, 6, "single date")
@@ -883,7 +890,7 @@ if __name__ == "__main__":
             "hiatus": {"start": "", "end": ""},
             "post": {"start": "", "weeks": 26},
             "print_ship": {"start": "", "weeks": 4},
-            "ready": {"date": "06/18/27"},
+            "ready": {"date": ""},
         },
     }
     create_workbook(sample, APP_DIR / "exports" / "sample_spe_block_calendar.xlsx")

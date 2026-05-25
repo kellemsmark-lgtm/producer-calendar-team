@@ -1,7 +1,7 @@
 {
   "name": "Producer Calendar UX Test",
   "short_name": "Producer Cal",
-  "description": "Production scheduling calendar with Excel, PDF, email, assistant intake, and dark mode.",
+  "description": "Production scheduling calendar with Excel, PDF, email, assistant intake, dark mode, and day overrides.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -851,7 +851,7 @@ html[data-theme="dark"] .section-badge.muted {
 html[data-theme="dark"] .text-button { color: #9acaff; }
 
 
-/* v2.0 functional polish: manual day overrides + explicit email client controls */
+/* v2.1 functional polish: ready Friday default + manual day overrides + explicit email client controls */
 .email-client-control {
   display: inline-flex;
   align-items: center;
