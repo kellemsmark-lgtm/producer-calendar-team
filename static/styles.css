@@ -953,3 +953,87 @@ html[data-theme="dark"] .custom-range-row strong { color: var(--ink); }
   .custom-range-row { grid-template-columns: auto 1fr; }
   .custom-range-row .text-button { grid-column: 2; justify-self: start; }
 }
+
+
+/* v2.4 email client launch sheet */
+.email-launch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.email-launch-sheet {
+  position: relative;
+  width: min(520px, calc(100vw - 40px));
+  border-radius: 28px;
+  padding: 24px;
+  background: var(--panel, #ffffff);
+  color: var(--ink, #1d1d1f);
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  box-shadow: 0 24px 70px rgba(0,0,0,.28);
+}
+.email-launch-sheet h2 {
+  margin: 4px 0 8px;
+  font-size: 26px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+.email-sheet-copy,
+.email-sheet-note {
+  color: var(--muted, #6e6e73);
+  line-height: 1.35;
+  margin: 0 0 16px;
+}
+.email-sheet-note {
+  margin: 14px 0 0;
+  font-size: 13px;
+}
+.email-sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0;
+}
+.email-sheet-actions .button {
+  text-decoration: none;
+  text-align: center;
+}
+.email-sheet-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 4px;
+}
+.email-sheet-links a {
+  color: var(--accent, #007aff);
+  font-weight: 700;
+  text-decoration: none;
+}
+.email-sheet-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(127,127,127,.16);
+  color: inherit;
+  font-size: 24px;
+  line-height: 30px;
+  cursor: pointer;
+}
+body.dark .email-launch-sheet {
+  background: #1f2024;
+  color: #f5f5f7;
+  border-color: rgba(255,255,255,.12);
+}
+body.dark .email-sheet-copy,
+body.dark .email-sheet-note {
+  color: rgba(245,245,247,.72);
+}

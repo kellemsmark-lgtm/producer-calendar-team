@@ -39,7 +39,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v2.3-outlook-default-stable-email"
+BUILD_VERSION = "v2.4-email-client-direct-fix"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -400,10 +400,13 @@ def _mailto_url(subject: str, body: str) -> str:
 
 
 def _outlook_app_url(subject: str, body: str) -> str:
-    """Build a best-effort Outlook mobile compose deep link.
+    """Build an Outlook native-app compose deep link.
 
-    This is used only as an iPhone/iPad convenience. Desktop/Mac uses mailto so
-    the installed default email app handles the draft reliably.
+    This intentionally uses the ms-outlook:// scheme so choosing Outlook App
+    does not fall through to Apple Mail on machines where Apple Mail is the
+    default mail handler. If Outlook is not installed or does not register the
+    scheme on a device, the browser/OS may show no draft; the UI explains that
+    rather than silently opening the wrong app.
     """
     return "ms-outlook://compose?" + urlencode({"to": "", "subject": subject, "body": body}, quote_via=quote)
 
@@ -411,15 +414,16 @@ def _outlook_app_url(subject: str, body: str) -> str:
 def _build_email_url(provider: str, subject: str, body: str) -> dict[str, str]:
     """Build provider-specific compose URLs.
 
-    Outlook is now the app's default email preference. The reliable compose path
-    for desktop browsers is still mailto, which opens Outlook when Outlook is the
-    device's default email app. Outlook Web is intentionally not used.
+    Outlook App uses a native Outlook deep link. Apple Mail uses mailto, the
+    browser-safe Apple Mail/default-mail compose route. A hosted PWA cannot
+    silently send or force attachments; it opens a draft with secure links.
     """
     provider = (provider or "outlook_app").lower()
     mailto = _mailto_url(subject, body)
+    outlook = _outlook_app_url(subject, body)
     if provider in {"outlook", "outlook_app", "outlook_native"}:
-        return {"primary": mailto, "fallback": mailto, "mobile": _outlook_app_url(subject, body), "kind": "outlook_app"}
-    return {"primary": mailto, "fallback": mailto, "mobile": "", "kind": "apple_mail"}
+        return {"primary": outlook, "fallback": mailto, "mobile": outlook, "outlook": outlook, "kind": "outlook_app"}
+    return {"primary": mailto, "fallback": mailto, "mobile": "", "outlook": outlook, "kind": "apple_mail"}
 
 
 def _api(environ: dict[str, Any], start_response: Callable, path: str):
@@ -500,6 +504,8 @@ def _api(environ: dict[str, Any], start_response: Callable, path: str):
                 "emailLaunchMode": email_urls.get("kind"),
                 "mailto": email_urls.get("fallback"),
                 "outlookMobileUrl": email_urls.get("mobile"),
+                "outlookAppUrl": email_urls.get("outlook"),
+                "appleMailUrl": email_urls.get("fallback"),
                 "excel": {"filename": xlsx.name, "downloadUrl": f"/exports/{xlsx.name}", "shareUrl": excel_link},
                 "pdf": {"filename": result_pdf.name, "downloadUrl": f"/exports/{result_pdf.name}", "shareUrl": pdf_link},
                 "message": "Exports created. The email draft includes direct Excel and PDF download links.",

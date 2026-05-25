@@ -12,8 +12,8 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v2.3-outlook-default-stable-email';
-const buildVersion = 'v2.3-outlook-default-stable-email';
+const currentDefaultsVersion = 'v2.4-email-client-direct-fix';
+const buildVersion = 'v2.4-email-client-direct-fix';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
@@ -672,36 +672,81 @@ function isLikelyMobileAppleDevice() {
 
 function launchEmailClient(data) {
   const provider = getEmailProviderValue();
-  const mailto = data.mailto || data.fallbackEmailUrl || data.emailUrl;
-  const outlookMobile = data.outlookMobileUrl || data.emailUrl;
-  if (!mailto && !outlookMobile) return;
+  const appleMailUrl = data.appleMailUrl || data.mailto || data.fallbackEmailUrl || data.emailUrl;
+  const outlookUrl = data.outlookAppUrl || data.outlookMobileUrl || data.emailUrl;
 
-  // Reliable rule:
-  // - Mac/desktop: use mailto. That opens Outlook when Outlook is set as the
-  //   device's default email reader, and avoids the failed temp/web Outlook flow.
-  // - iPhone/iPad: try Outlook's app scheme only when Outlook App is selected;
-  //   fall back to the system mailto handler so the user still gets a draft.
-  // The app's own default is Outlook App, but the operating system still owns
-  // which native client handles mailto links.
-  if (provider === 'outlook_app' && isLikelyMobileAppleDevice() && outlookMobile && outlookMobile.startsWith('ms-outlook://')) {
-    let didHide = false;
-    const onVisibility = () => { if (document.hidden) didHide = true; };
-    document.addEventListener('visibilitychange', onVisibility, { once: true });
-    window.location.href = outlookMobile;
-    window.setTimeout(() => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      if (!didHide && mailto) {
-        showTransient('Outlook did not open directly. Opening the device email handler instead. Set Outlook as your default email app to keep this in Outlook.');
-        window.location.href = mailto;
-      }
-    }, 900);
+  // Explicit client rule:
+  // - Outlook App uses Outlook's native ms-outlook:// compose URL. This prevents
+  //   Outlook selection from falling through to Apple Mail when Apple Mail is
+  //   the default mail handler.
+  // - Apple Mail uses the standards-based mailto: compose URL. A hosted PWA
+  //   cannot force Apple Mail if a user has changed the OS-level default mail
+  //   app; the sheet makes the selected target explicit and gives a direct
+  //   user-click launch button for reliability.
+  // Browser/PWA apps cannot silently send; they can open a pre-filled draft.
+  showEmailClientSheet(data, provider, outlookUrl, appleMailUrl);
+
+  const selectedUrl = provider === 'outlook_app' ? outlookUrl : appleMailUrl;
+  const selectedLabel = provider === 'outlook_app' ? 'Outlook App' : 'Apple Mail';
+  if (!selectedUrl) {
+    showTransient(`${selectedLabel} compose link was not available.`, true);
     return;
   }
+  showTransient(`Opening ${selectedLabel} draft with Excel/PDF links.`);
 
-  if (provider === 'outlook_app') {
-    showTransient('Opening Outlook through the system email handler. Make Outlook your default email app on this device for this option to open Outlook.');
-  }
-  window.location.href = mailto || outlookMobile;
+  // Try the selected client immediately. If the browser blocks custom app URL
+  // schemes after an async export call, the visible launch sheet provides a
+  // second direct user gesture that opens the same URL.
+  setTimeout(() => openExternalEmailUrl(selectedUrl), 25);
+}
+
+function openExternalEmailUrl(url) {
+  if (!url) return;
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_self';
+  link.rel = 'noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function showEmailClientSheet(data, provider, outlookUrl, appleMailUrl) {
+  document.querySelectorAll('.email-launch-overlay').forEach(el => el.remove());
+  const selectedIsOutlook = provider === 'outlook_app';
+  const primaryLabel = selectedIsOutlook ? 'Open Outlook App' : 'Open Apple Mail';
+  const secondaryLabel = selectedIsOutlook ? 'Open Apple Mail instead' : 'Open Outlook App instead';
+  const primaryUrl = selectedIsOutlook ? outlookUrl : appleMailUrl;
+  const secondaryUrl = selectedIsOutlook ? appleMailUrl : outlookUrl;
+  const excelUrl = data.excel?.shareUrl || data.excel?.downloadUrl || '';
+  const pdfUrl = data.pdf?.shareUrl || data.pdf?.downloadUrl || '';
+  const overlay = document.createElement('div');
+  overlay.className = 'email-launch-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="email-launch-sheet">
+      <button type="button" class="email-sheet-close" aria-label="Close email launch sheet">×</button>
+      <p class="kicker">Email draft ready</p>
+      <h2>${escapeHtml(primaryLabel)}</h2>
+      <p class="email-sheet-copy">The draft includes the schedule summary and secure Excel/PDF download links. If your browser does not switch apps automatically, use the button below.</p>
+      <div class="email-sheet-actions">
+        <a class="button primary email-primary-launch" href="${escapeHtml(primaryUrl || '#')}">${escapeHtml(primaryLabel)}</a>
+        ${secondaryUrl ? `<a class="button email-secondary-launch" href="${escapeHtml(secondaryUrl)}">${escapeHtml(secondaryLabel)}</a>` : ''}
+      </div>
+      <div class="email-sheet-links" aria-label="Generated export links">
+        ${excelUrl ? `<a href="${escapeHtml(excelUrl)}" target="_blank" rel="noopener">Download Excel</a>` : ''}
+        ${pdfUrl ? `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Download PDF</a>` : ''}
+      </div>
+      <p class="email-sheet-note">Outlook App uses the native Outlook app link. Apple Mail uses the system email compose link.</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay || event.target.closest('.email-sheet-close')) overlay.remove();
+  });
+  overlay.querySelectorAll('.email-primary-launch, .email-secondary-launch').forEach(link => {
+    link.addEventListener('click', () => setTimeout(() => overlay.remove(), 700));
+  });
 }
 
 async function emailDraft() {
@@ -716,7 +761,7 @@ async function emailDraft() {
     const links = [];
     if (data.excel?.shareUrl || data.excel?.downloadUrl) links.push(`<a href="${data.excel.shareUrl || data.excel.downloadUrl}" target="_blank" rel="noopener">Excel link</a>`);
     if (data.pdf?.shareUrl || data.pdf?.downloadUrl) links.push(`<a href="${data.pdf.shareUrl || data.pdf.downloadUrl}" target="_blank" rel="noopener">PDF link</a>`);
-    const clientLabel = getEmailProviderValue() === 'outlook_app' ? 'Outlook app' : 'Apple Mail / default mail app';
+    const clientLabel = getEmailProviderValue() === 'outlook_app' ? 'Outlook App' : 'Apple Mail';
     showTransient((data.message || 'Email draft created.') + ` Opening ${clientLabel}.` + (links.length ? ' ' + links.join(' | ') : ''));
     launchEmailClient(data);
   } catch (e) {

@@ -121,3 +121,18 @@ Ready for Release defaults to the last Friday inside Print & Ship. Static assets
 ## v2.2 Outlook App Email
 
 The Outlook email option now attempts to open the installed Outlook app rather than Outlook Web. If the device/browser cannot open Outlook directly, the flow falls back to the system mail handler. For Mac desktop users who want Outlook, set Outlook as the default email reader in macOS. For iPhone/iPad users, set Outlook as the default email app in iOS/iPadOS Settings.
+
+
+## v2.4 direct email clients
+
+- Outlook App selection opens the native Outlook compose URL (`ms-outlook://compose`) instead of falling back to Apple Mail.
+- Apple Mail selection opens the Apple Mail/default compose route (`mailto:`).
+- The email draft includes secure Excel/PDF download links; browser-based drafts cannot attach generated files directly without Microsoft Graph or another mail API.
+
+
+### v2.4 Email Client Direct Fix
+
+- Outlook App selection now uses a native `ms-outlook://compose` draft link rather than `mailto:`.
+- Apple Mail selection uses the standard `mailto:` compose link.
+- After export links are generated, the app shows an Email Draft Ready sheet with direct Open Outlook App and Open Apple Mail buttons. This gives Safari/Chrome a direct user gesture for app switching, which is more reliable than launching custom app schemes after an asynchronous export call.
+- The hosted web/PWA app still opens a prefilled draft; it cannot silently send a message without user confirmation or attach local files directly. The draft includes secure Excel/PDF links.
