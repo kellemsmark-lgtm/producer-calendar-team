@@ -12,8 +12,8 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v2.4-email-client-direct-fix';
-const buildVersion = 'v2.4-email-client-direct-fix';
+const currentDefaultsVersion = 'v2.6-team-share-options';
+const buildVersion = 'v2.6-team-share-options';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
@@ -26,7 +26,9 @@ const defaults = {
   asOfDate: '',
   productionLocation: 'US',
   anchorMode: 'auto',
-  emailProvider: 'outlook_app',
+  emailProvider: 'outlook_web',
+  emailTo: '',
+  emailCc: '',
   lastEditedAnchor: 'production',
   periods: {
     rd: { start: '', weeks: 0 },
@@ -64,7 +66,7 @@ function migrateDefaultWeeks(state) {
     state.periods.post = state.periods.post || {};
     state.periods.print_ship = state.periods.print_ship || {};
     if (!Array.isArray(state.customRanges)) state.customRanges = [];
-    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail' || state.emailProvider === 'outlook_web' || state.emailProvider === 'office365' || state.emailProvider === 'apple_mail') state.emailProvider = 'outlook_app';
+    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail' || state.emailProvider === 'outlook_web' || state.emailProvider === 'office365' || state.emailProvider === 'outlook_app') state.emailProvider = 'outlook_web';
 
     if (state.periods.pre.weeks === undefined || state.periods.pre.weeks === '' || Number(state.periods.pre.weeks) <= 0 || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
     if (state.periods.post.weeks === undefined || state.periods.post.weeks === '' || Number(state.periods.post.weeks) <= 0 || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
@@ -206,12 +208,14 @@ function emailProviderControls() {
 
 function normalizeEmailProvider(value) {
   const v = String(value || '').toLowerCase();
-  if (v.includes('outlook') || v.includes('office') || v === 'outlook' || v === 'outlook_app') return 'outlook_app';
-  return 'apple_mail';
+  if (v.includes('apple') || v === 'mail' || v === 'default') return 'apple_mail';
+  if (v.includes('message') || v.includes('text') || v.includes('sms') || v.includes('imessage')) return 'messages';
+  if (v.includes('outlook') || v.includes('office') || v.includes('365') || v.includes('microsoft') || v.includes('web')) return 'outlook_web';
+  return 'outlook_web';
 }
 
 function getEmailProviderValue() {
-  return normalizeEmailProvider(($('emailProviderTop') || $('emailProvider') || {}).value || 'outlook_app');
+  return normalizeEmailProvider(($('emailProviderTop') || $('emailProvider') || {}).value || 'outlook_web');
 }
 
 function setEmailProviderValue(value) {
@@ -232,6 +236,8 @@ function payloadFromForm() {
     productionLocation: $('productionLocation').value || 'US',
     anchorMode: $('anchorMode').value || 'auto',
     emailProvider: getEmailProviderValue(),
+    emailTo: $('emailTo') ? $('emailTo').value : '',
+    emailCc: $('emailCc') ? $('emailCc').value : '',
     coordinatorSummary: buildCoordinatorSummary(),
     lastEditedAnchor: loadState().lastEditedAnchor || 'production',
     periods: {
@@ -253,7 +259,9 @@ function setFormFromState(s) {
   $('asOfDate').value = s.asOfDate || '';
   $('productionLocation').value = s.productionLocation || 'US';
   $('anchorMode').value = s.anchorMode || 'auto';
-  setEmailProviderValue(s.emailProvider || 'outlook_app');
+  setEmailProviderValue(s.emailProvider || 'outlook_web');
+  if ($('emailTo')) $('emailTo').value = s.emailTo || '';
+  if ($('emailCc')) $('emailCc').value = s.emailCc || '';
   $('rdStart').value = s.periods.rd.start || '';
   $('rdWeeks').value = s.periods.rd.weeks ?? 0;
   $('preStart').value = s.periods.pre.start || '';
@@ -671,55 +679,104 @@ function isLikelyMobileAppleDevice() {
 }
 
 function launchEmailClient(data) {
-  const provider = getEmailProviderValue();
-  const appleMailUrl = data.appleMailUrl || data.mailto || data.fallbackEmailUrl || data.emailUrl;
-  const outlookUrl = data.outlookAppUrl || data.outlookMobileUrl || data.emailUrl;
-
-  // Explicit client rule:
-  // - Outlook App uses Outlook's native ms-outlook:// compose URL. This prevents
-  //   Outlook selection from falling through to Apple Mail when Apple Mail is
-  //   the default mail handler.
-  // - Apple Mail uses the standards-based mailto: compose URL. A hosted PWA
-  //   cannot force Apple Mail if a user has changed the OS-level default mail
-  //   app; the sheet makes the selected target explicit and gives a direct
-  //   user-click launch button for reliability.
-  // Browser/PWA apps cannot silently send; they can open a pre-filled draft.
-  showEmailClientSheet(data, provider, outlookUrl, appleMailUrl);
-
-  const selectedUrl = provider === 'outlook_app' ? outlookUrl : appleMailUrl;
-  const selectedLabel = provider === 'outlook_app' ? 'Outlook App' : 'Apple Mail';
-  if (!selectedUrl) {
-    showTransient(`${selectedLabel} compose link was not available.`, true);
+  const provider = data.provider || getEmailProviderValue();
+  if (provider === 'messages') {
+    showMessageShareSheet(data);
+    showTransient(data.message || 'Exports created. Choose Messages from the share sheet or copy the links.');
     return;
   }
-  showTransient(`Opening ${selectedLabel} draft with Excel/PDF links.`);
-
-  // Try the selected client immediately. If the browser blocks custom app URL
-  // schemes after an async export call, the visible launch sheet provides a
-  // second direct user gesture that opens the same URL.
-  setTimeout(() => openExternalEmailUrl(selectedUrl), 25);
+  const outlookUrl = data.outlookWebUrl || data.emailUrl;
+  const appleMailUrl = data.appleMailUrl || data.mailto || data.fallbackEmailUrl;
+  showEmailClientSheet(data, provider, outlookUrl, appleMailUrl);
+  const autoUrl = provider === 'apple_mail' ? appleMailUrl : outlookUrl;
+  if (autoUrl) setTimeout(() => openExternalEmailUrl(autoUrl), 25);
 }
 
 function openExternalEmailUrl(url) {
   if (!url) return;
   const link = document.createElement('a');
   link.href = url;
-  link.target = '_self';
-  link.rel = 'noreferrer';
+  link.target = url.startsWith('http') ? '_blank' : '_self';
+  link.rel = 'noreferrer noopener';
   document.body.appendChild(link);
   link.click();
   link.remove();
 }
 
-function showEmailClientSheet(data, provider, outlookUrl, appleMailUrl) {
-  document.querySelectorAll('.email-launch-overlay').forEach(el => el.remove());
-  const selectedIsOutlook = provider === 'outlook_app';
-  const primaryLabel = selectedIsOutlook ? 'Open Outlook App' : 'Open Apple Mail';
-  const secondaryLabel = selectedIsOutlook ? 'Open Apple Mail instead' : 'Open Outlook App instead';
-  const primaryUrl = selectedIsOutlook ? outlookUrl : appleMailUrl;
-  const secondaryUrl = selectedIsOutlook ? appleMailUrl : outlookUrl;
+function generatedLinksHtml(data) {
   const excelUrl = data.excel?.shareUrl || data.excel?.downloadUrl || '';
   const pdfUrl = data.pdf?.shareUrl || data.pdf?.downloadUrl || '';
+  return `
+    <div class="email-sheet-links" aria-label="Generated export links">
+      ${excelUrl ? `<a href="${escapeHtml(excelUrl)}" target="_blank" rel="noopener">Download Excel</a>` : ''}
+      ${pdfUrl ? `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Download PDF</a>` : ''}
+    </div>`;
+}
+
+async function shareScheduleText(data) {
+  const text = data.shareText || '';
+  const title = data.shareTitle || 'Producer Calendar exports';
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text });
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+  return false;
+}
+
+async function copyShareText(data) {
+  const text = data.shareText || '';
+  try {
+    await navigator.clipboard.writeText(text);
+    showTransient('Schedule links copied. Paste them into Messages, Teams, or email.');
+  } catch (err) {
+    showTransient('Could not copy automatically. Select and copy the message text from the sheet.', true);
+  }
+}
+
+function showMessageShareSheet(data) {
+  document.querySelectorAll('.email-launch-overlay').forEach(el => el.remove());
+  const smsUrl = data.smsUrl || '';
+  const shareText = data.shareText || '';
+  const overlay = document.createElement('div');
+  overlay.className = 'email-launch-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="email-launch-sheet wide">
+      <button type="button" class="email-sheet-close" aria-label="Close share sheet">×</button>
+      <p class="kicker">Messages share ready</p>
+      <h2>Send Excel and PDF links</h2>
+      <p class="email-sheet-copy">Use the system share sheet to choose Messages, or open Messages directly. The text includes secure Excel/PDF links that expire after 7 days.</p>
+      <div class="email-sheet-actions">
+        <button type="button" class="button primary" data-share-system>Share / Message</button>
+        ${smsUrl ? `<a class="button" href="${escapeHtml(smsUrl)}" data-sms-open>Open Messages</a>` : ''}
+        <button type="button" class="button" data-copy-share>Copy Text</button>
+      </div>
+      <textarea class="share-preview" readonly>${escapeHtml(shareText)}</textarea>
+      ${generatedLinksHtml(data)}
+      <p class="email-sheet-note">Text/iMessage cannot attach generated files from a hosted web app. This sends secure links to both outputs instead.</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay || event.target.closest('.email-sheet-close')) overlay.remove();
+    if (event.target.closest('[data-share-system]')) shareScheduleText(data);
+    if (event.target.closest('[data-copy-share]')) copyShareText(data);
+  });
+}
+
+function showEmailClientSheet(data, provider, outlookUrl, appleMailUrl) {
+  document.querySelectorAll('.email-launch-overlay').forEach(el => el.remove());
+  const isApple = provider === 'apple_mail';
+  const title = isApple ? 'Open Apple Mail' : 'Open Outlook Web';
+  const kicker = isApple ? 'Apple Mail draft ready' : 'Outlook Web draft ready';
+  const copy = isApple
+    ? 'The draft includes the schedule summary and secure Excel/PDF download links. If your browser does not switch apps automatically, use the button below.'
+    : 'Outlook Web will open a draft with the schedule summary and secure Excel/PDF download links. This avoids Microsoft Graph or admin consent during the pilot.';
+  const primaryUrl = isApple ? appleMailUrl : outlookUrl;
   const overlay = document.createElement('div');
   overlay.className = 'email-launch-overlay';
   overlay.setAttribute('role', 'dialog');
@@ -727,24 +784,22 @@ function showEmailClientSheet(data, provider, outlookUrl, appleMailUrl) {
   overlay.innerHTML = `
     <div class="email-launch-sheet">
       <button type="button" class="email-sheet-close" aria-label="Close email launch sheet">×</button>
-      <p class="kicker">Email draft ready</p>
-      <h2>${escapeHtml(primaryLabel)}</h2>
-      <p class="email-sheet-copy">The draft includes the schedule summary and secure Excel/PDF download links. If your browser does not switch apps automatically, use the button below.</p>
+      <p class="kicker">${escapeHtml(kicker)}</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p class="email-sheet-copy">${escapeHtml(copy)}</p>
       <div class="email-sheet-actions">
-        <a class="button primary email-primary-launch" href="${escapeHtml(primaryUrl || '#')}">${escapeHtml(primaryLabel)}</a>
-        ${secondaryUrl ? `<a class="button email-secondary-launch" href="${escapeHtml(secondaryUrl)}">${escapeHtml(secondaryLabel)}</a>` : ''}
+        <a class="button primary email-primary-launch" href="${escapeHtml(primaryUrl || '#')}" ${isApple ? '' : 'target="_blank" rel="noopener"'}>${escapeHtml(title)}</a>
+        ${!isApple && appleMailUrl ? `<a class="button" href="${escapeHtml(appleMailUrl)}">Open Apple Mail instead</a>` : ''}
+        ${isApple && outlookUrl ? `<a class="button" href="${escapeHtml(outlookUrl)}" target="_blank" rel="noopener">Open Outlook Web instead</a>` : ''}
       </div>
-      <div class="email-sheet-links" aria-label="Generated export links">
-        ${excelUrl ? `<a href="${escapeHtml(excelUrl)}" target="_blank" rel="noopener">Download Excel</a>` : ''}
-        ${pdfUrl ? `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Download PDF</a>` : ''}
-      </div>
-      <p class="email-sheet-note">Outlook App uses the native Outlook app link. Apple Mail uses the system email compose link.</p>
+      ${generatedLinksHtml(data)}
+      <p class="email-sheet-note">Email drafts include secure links. Download and attach the files manually if physical attachments are required.</p>
     </div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener('click', event => {
     if (event.target === overlay || event.target.closest('.email-sheet-close')) overlay.remove();
   });
-  overlay.querySelectorAll('.email-primary-launch, .email-secondary-launch').forEach(link => {
+  overlay.querySelectorAll('.email-primary-launch').forEach(link => {
     link.addEventListener('click', () => setTimeout(() => overlay.remove(), 700));
   });
 }
@@ -757,12 +812,19 @@ async function emailDraft() {
   try {
     const res = await fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
-    if (!res.ok || data.ok === false) throw new Error(data.error || 'Email draft failed');
+    if (!res.ok || (data.ok === false && !data.authRequired)) throw new Error(data.error || 'Email failed');
     const links = [];
     if (data.excel?.shareUrl || data.excel?.downloadUrl) links.push(`<a href="${data.excel.shareUrl || data.excel.downloadUrl}" target="_blank" rel="noopener">Excel link</a>`);
     if (data.pdf?.shareUrl || data.pdf?.downloadUrl) links.push(`<a href="${data.pdf.shareUrl || data.pdf.downloadUrl}" target="_blank" rel="noopener">PDF link</a>`);
-    const clientLabel = getEmailProviderValue() === 'outlook_app' ? 'Outlook App' : 'Apple Mail';
-    showTransient((data.message || 'Email draft created.') + ` Opening ${clientLabel}.` + (links.length ? ' ' + links.join(' | ') : ''));
+    const providerValue = getEmailProviderValue();
+    const clientLabel = providerValue === 'outlook_web' ? 'Outlook Web' : providerValue === 'messages' ? 'Messages' : 'Apple Mail';
+    if (data.authRequired) {
+      showTransient(data.error || 'Email provider needs setup before sending.', true);
+    } else if (data.sent) {
+      showTransient(data.message || 'Email sent.');
+    } else {
+      showTransient((data.message || 'Email draft created.') + ` Opening ${clientLabel}.` + (links.length ? ' ' + links.join(' | ') : ''));
+    }
     launchEmailClient(data);
   } catch (e) {
     showTransient(e.message, true);
@@ -796,7 +858,7 @@ function initTabs() {
 }
 
 function bindInputs() {
-  const ids = ['projectTitle', 'productionLocation', 'anchorMode', 'rdWeeks', 'preWeeks', 'travelWeeks', 'productionDays', 'postWeeks', 'printShipWeeks'];
+  const ids = ['projectTitle', 'productionLocation', 'anchorMode', 'emailTo', 'emailCc', 'rdWeeks', 'preWeeks', 'travelWeeks', 'productionDays', 'postWeeks', 'printShipWeeks'];
   for (const id of ids) $(id).addEventListener('input', updateAndCalculate);
   emailProviderControls().forEach(control => control.addEventListener('change', () => syncEmailProviderFrom(control)));
   emailProviderControls().forEach(control => control.addEventListener('input', () => syncEmailProviderFrom(control)));
@@ -881,7 +943,7 @@ const assistantQuestions = [
   { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
   { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
   { key: 'readyDate', prompt: 'Ready for Release defaults to the last Friday inside Print & Ship. Enter a release date only if you want to override it, or type skip.', field: 'readyDate', normalize: true, allowSkip: true },
-  { key: 'emailProvider', prompt: 'Which email client should the draft use? Outlook App is the default, or say Apple Mail if needed.', field: 'emailProvider', map: mapEmailAnswer }
+  { key: 'emailProvider', prompt: 'Which sharing method should be used? Outlook Web is the default; you can also say Apple Mail or Messages/text.', field: 'emailProvider', map: mapEmailAnswer }
 ];
 
 function initAssistant() {
@@ -1021,8 +1083,9 @@ function mapAnchorAnswer(answer) {
 
 function mapEmailAnswer(answer) {
   const a = answer.toLowerCase();
-  if (a.includes('outlook') || a.includes('office') || a.includes('365')) return 'outlook_app';
-  return 'apple_mail';
+  if (a.includes('message') || a.includes('text') || a.includes('sms') || a.includes('imessage')) return 'messages';
+  if (a.includes('apple') || a.includes('mail')) return 'apple_mail';
+  return 'outlook_web';
 }
 
 function fieldLabel(field) {
@@ -1051,7 +1114,13 @@ async function loadServerInfo() {
   try {
     const res = await fetch('/api/info');
     const data = await res.json();
-    $('serverInfo').textContent = data.message || 'Secure hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.'; if ($('buildBadge')) $('buildBadge').textContent = data.buildVersion || buildVersion;
+    $('serverInfo').textContent = data.message || 'Secure hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.';
+    if ($('buildBadge')) $('buildBadge').textContent = data.buildVersion || buildVersion;
+    const status = $('shareStatus');
+    if (status) {
+      status.textContent = 'Share options use Outlook Web, Apple Mail, or Messages links. No Microsoft admin consent is required for this pilot.';
+      status.classList.remove('warn');
+    }
   } catch (e) {
     $('serverInfo').textContent = 'Secure hosted app is running.';
   }

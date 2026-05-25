@@ -136,3 +136,13 @@ The Outlook email option now attempts to open the installed Outlook app rather t
 - Apple Mail selection uses the standard `mailto:` compose link.
 - After export links are generated, the app shows an Email Draft Ready sheet with direct Open Outlook App and Open Apple Mail buttons. This gives Safari/Chrome a direct user gesture for app switching, which is more reliable than launching custom app schemes after an asynchronous export call.
 - The hosted web/PWA app still opens a prefilled draft; it cannot silently send a message without user confirmation or attach local files directly. The draft includes secure Excel/PDF links.
+
+## v2.6 Team Share Options
+
+For the pre-InfoSec team pilot, the app supports three share methods without Microsoft Graph/admin consent:
+
+- Outlook Web Draft: opens Outlook on the web compose with the schedule summary and secure Excel/PDF links.
+- Apple Mail Draft: uses the device mail compose handler through `mailto:`.
+- Messages / Text Links: uses the Web Share API when available, with Messages/SMS and copy fallback.
+
+Generated files are shared as signed links that expire after 7 days. Physical email attachments still require manual download/attach unless a later Microsoft Graph-approved production path is enabled.

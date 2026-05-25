@@ -28,6 +28,8 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 from calendar_engine import calculate_schedule
 from export_excel import create_workbook
@@ -39,7 +41,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v2.4-email-client-direct-fix"
+BUILD_VERSION = "v2.6-team-share-options"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -47,6 +49,19 @@ MAX_LOGIN_ATTEMPTS = int(os.environ.get("MAX_LOGIN_ATTEMPTS", "12"))
 LOGIN_WINDOW_SECONDS = int(os.environ.get("LOGIN_WINDOW_SECONDS", str(15 * 60)))
 
 SECRET_KEY = os.environ.get("SECRET_KEY") or os.environ.get("CALENDAR_SECRET_KEY") or secrets.token_hex(32)
+
+# Microsoft Graph / Outlook email integration.
+# This sends through the signed-in Microsoft 365 mailbox server-side, so the
+# message appears in Outlook Sent Items. It does not rely on local Outlook app
+# URL schemes.
+MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "organizations").strip() or "organizations"
+MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "").strip()
+MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "").strip()
+MICROSOFT_REDIRECT_URI = os.environ.get("MICROSOFT_REDIRECT_URI", "").strip()
+MICROSOFT_SCOPES = os.environ.get("MICROSOFT_SCOPES", "openid profile email offline_access User.Read Mail.Send")
+GRAPH_DEFAULT_RECIPIENTS = os.environ.get("GRAPH_DEFAULT_RECIPIENTS", "").strip()
+GRAPH_SEND_ATTACHMENTS = os.environ.get("GRAPH_SEND_ATTACHMENTS", "true").lower() in {"1", "true", "yes", "on"}
+
 
 SESSIONS: dict[str, dict[str, Any]] = {}
 LOGIN_ATTEMPTS: dict[str, list[float]] = {}
@@ -235,6 +250,199 @@ def _make_session(username: str) -> str:
     return _sign(token)
 
 
+def _current_session(environ: dict[str, Any]) -> dict[str, Any] | None:
+    cookies = _parse_cookies(environ)
+    morsel = cookies.get(SESSION_COOKIE)
+    if not morsel:
+        return None
+    token = _unsign(morsel.value)
+    if not token:
+        return None
+    sess = SESSIONS.get(token)
+    if not sess:
+        return None
+    if sess.get("expires", 0) < time.time():
+        SESSIONS.pop(token, None)
+        return None
+    sess["expires"] = time.time() + SESSION_TTL_SECONDS
+    return sess
+
+
+def _microsoft_redirect_uri(environ: dict[str, Any]) -> str:
+    return MICROSOFT_REDIRECT_URI or f"{_base_url(environ)}/auth/microsoft/callback"
+
+
+def _microsoft_is_configured() -> bool:
+    return bool(MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET)
+
+
+def _microsoft_authorize_url(environ: dict[str, Any], state: str) -> str:
+    tenant = quote(MICROSOFT_TENANT_ID or "organizations")
+    params = {
+        "client_id": MICROSOFT_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": _microsoft_redirect_uri(environ),
+        "response_mode": "query",
+        "scope": MICROSOFT_SCOPES,
+        "state": state,
+        "prompt": "select_account",
+    }
+    return f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?{urlencode(params, quote_via=quote)}"
+
+
+def _http_json_request(url: str, method: str = "GET", payload: Any | None = None, access_token: str | None = None, form: bool = False) -> Any:
+    headers: dict[str, str] = {"Accept": "application/json"}
+    data: bytes | None = None
+    if payload is not None:
+        if form:
+            data = urlencode(payload, quote_via=quote).encode("utf-8")
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    req = Request(url, data=data, headers=headers, method=method)
+    try:
+        with urlopen(req, timeout=45) as resp:
+            raw = resp.read()
+            if not raw:
+                return {}
+            return json.loads(raw.decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"Microsoft Graph request failed ({exc.code}): {detail[:900]}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Microsoft Graph request failed: {exc.reason}") from exc
+
+
+def _exchange_microsoft_code(environ: dict[str, Any], code: str) -> dict[str, Any]:
+    token_url = f"https://login.microsoftonline.com/{quote(MICROSOFT_TENANT_ID or 'organizations')}/oauth2/v2.0/token"
+    payload = {
+        "client_id": MICROSOFT_CLIENT_ID,
+        "client_secret": MICROSOFT_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": _microsoft_redirect_uri(environ),
+        "scope": MICROSOFT_SCOPES,
+    }
+    tokens = _http_json_request(token_url, method="POST", payload=payload, form=True)
+    tokens["expires_at"] = int(time.time()) + int(tokens.get("expires_in", 3600)) - 90
+    return tokens
+
+
+def _refresh_microsoft_token(sess: dict[str, Any]) -> dict[str, Any] | None:
+    tokens = sess.get("microsoft_tokens") or {}
+    refresh_token = tokens.get("refresh_token")
+    if not refresh_token:
+        return None
+    token_url = f"https://login.microsoftonline.com/{quote(MICROSOFT_TENANT_ID or 'organizations')}/oauth2/v2.0/token"
+    payload = {
+        "client_id": MICROSOFT_CLIENT_ID,
+        "client_secret": MICROSOFT_CLIENT_SECRET,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": MICROSOFT_SCOPES,
+    }
+    refreshed = _http_json_request(token_url, method="POST", payload=payload, form=True)
+    refreshed["expires_at"] = int(time.time()) + int(refreshed.get("expires_in", 3600)) - 90
+    if "refresh_token" not in refreshed:
+        refreshed["refresh_token"] = refresh_token
+    sess["microsoft_tokens"] = refreshed
+    return refreshed
+
+
+def _microsoft_access_token(environ: dict[str, Any]) -> tuple[str | None, str | None]:
+    if not _microsoft_is_configured():
+        return None, "Microsoft 365 email is not configured. Add MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, and MICROSOFT_REDIRECT_URI in Render."
+    sess = _current_session(environ)
+    if not sess:
+        return None, "Your Producer Calendar session has expired. Sign in again."
+    tokens = sess.get("microsoft_tokens") or {}
+    if tokens.get("access_token") and int(tokens.get("expires_at", 0)) > int(time.time()) + 60:
+        return str(tokens["access_token"]), None
+    refreshed = _refresh_microsoft_token(sess)
+    if refreshed and refreshed.get("access_token"):
+        return str(refreshed["access_token"]), None
+    return None, "Microsoft 365 is not connected yet."
+
+
+def _graph_me(access_token: str) -> dict[str, Any]:
+    return _http_json_request("https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName", access_token=access_token)
+
+
+def _split_recipients(value: str) -> list[str]:
+    out: list[str] = []
+    for part in str(value or "").replace(";", ",").split(","):
+        email = part.strip()
+        if email and "@" in email:
+            out.append(email)
+    return out
+
+
+def _recipient_objects(addresses: list[str]) -> list[dict[str, Any]]:
+    return [{"emailAddress": {"address": address}} for address in addresses]
+
+
+def _file_attachment(path: Path) -> dict[str, Any]:
+    ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": path.name,
+        "contentType": ctype,
+        "contentBytes": base64.b64encode(path.read_bytes()).decode("ascii"),
+    }
+
+
+def _plain_to_html(text: str) -> str:
+    return "<br>".join(html.escape(line) for line in text.splitlines())
+
+
+def _send_via_microsoft_graph(environ: dict[str, Any], subject: str, body: str, xlsx: Path, pdf: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    access_token, err = _microsoft_access_token(environ)
+    if not access_token:
+        return {"ok": False, "authRequired": True, "authUrl": "/auth/microsoft/start", "error": err}
+    sess = _current_session(environ) or {}
+    me = sess.get("microsoft_user")
+    if not me:
+        me = _graph_me(access_token)
+        sess["microsoft_user"] = me
+    recipients = _split_recipients(payload.get("emailTo") or payload.get("recipients") or GRAPH_DEFAULT_RECIPIENTS)
+    if not recipients:
+        fallback = (me or {}).get("mail") or (me or {}).get("userPrincipalName")
+        if fallback:
+            recipients = [fallback]
+    if not recipients:
+        raise RuntimeError("Add at least one email recipient before sending through Microsoft 365.")
+    cc = _split_recipients(payload.get("emailCc") or "")
+    attachments = [_file_attachment(xlsx), _file_attachment(pdf)] if GRAPH_SEND_ATTACHMENTS else []
+    message: dict[str, Any] = {
+        "subject": subject,
+        "body": {"contentType": "HTML", "content": _plain_to_html(body)},
+        "toRecipients": _recipient_objects(recipients),
+    }
+    if cc:
+        message["ccRecipients"] = _recipient_objects(cc)
+    if attachments:
+        message["attachments"] = attachments
+    _http_json_request(
+        "https://graph.microsoft.com/v1.0/me/sendMail",
+        method="POST",
+        payload={"message": message, "saveToSentItems": True},
+        access_token=access_token,
+    )
+    return {
+        "ok": True,
+        "sent": True,
+        "provider": "microsoft_graph",
+        "message": "Email sent through Microsoft 365 / Outlook and saved to Sent Items.",
+        "to": recipients,
+        "cc": cc,
+        "microsoftAccount": me,
+        "attachmentsIncluded": bool(attachments),
+    }
+
+
 def _cleanup_sessions() -> None:
     now = time.time()
     for token, sess in list(SESSIONS.items()):
@@ -389,41 +597,55 @@ def _serve_export(start_response: Callable, path: str):
     return _response(start_response, 200, target.read_bytes(), ctype, headers)
 
 
-def _mailto_url(subject: str, body: str) -> str:
-    """Build a standards-based mailto compose link.
+def _recipient_string(value: str | list[str] | None) -> str:
+    if isinstance(value, list):
+        return ";".join([str(v).strip() for v in value if str(v).strip()])
+    return str(value or "").replace(",", ";").strip()
 
-    Browser/PWA apps cannot guarantee native attachments in a compose draft, so
-    the body includes time-limited download links. Percent-encoding is used so
-    clients do not display plus signs in place of spaces.
+
+def _mailto_url(subject: str, body: str, to: str = "", cc: str = "") -> str:
+    """Build a standards-based mailto compose link for Apple Mail/default mail."""
+    params = {"subject": subject, "body": body}
+    if cc:
+        params["cc"] = cc
+    return "mailto:" + quote(_recipient_string(to), safe="@.;,+") + "?" + urlencode(params, quote_via=quote)
+
+
+def _outlook_web_url(subject: str, body: str, to: str = "", cc: str = "") -> str:
+    """Build an Outlook on the web compose deeplink.
+
+    This avoids Microsoft Graph/admin consent while keeping Outlook as an explicit
+    choice during the team pilot. It opens a draft in Outlook Web with secure
+    Excel/PDF links in the body.
     """
-    return "mailto:?" + urlencode({"subject": subject, "body": body}, quote_via=quote)
+    params = {"subject": subject, "body": body}
+    if to:
+        params["to"] = _recipient_string(to)
+    if cc:
+        params["cc"] = _recipient_string(cc)
+    return "https://outlook.office.com/mail/deeplink/compose?" + urlencode(params, quote_via=quote)
 
 
-def _outlook_app_url(subject: str, body: str) -> str:
-    """Build an Outlook native-app compose deep link.
+def _sms_url(body: str) -> str:
+    """Best-effort Messages/SMS fallback.
 
-    This intentionally uses the ms-outlook:// scheme so choosing Outlook App
-    does not fall through to Apple Mail on machines where Apple Mail is the
-    default mail handler. If Outlook is not installed or does not register the
-    scheme on a device, the browser/OS may show no draft; the UI explains that
-    rather than silently opening the wrong app.
+    The primary Messages path in the browser is Web Share. This SMS URL is kept
+    as a secondary fallback for iPhone/iPad/macOS environments that expose the
+    Messages handler.
     """
-    return "ms-outlook://compose?" + urlencode({"to": "", "subject": subject, "body": body}, quote_via=quote)
+    return "sms:?&" + urlencode({"body": body}, quote_via=quote)
 
 
-def _build_email_url(provider: str, subject: str, body: str) -> dict[str, str]:
-    """Build provider-specific compose URLs.
-
-    Outlook App uses a native Outlook deep link. Apple Mail uses mailto, the
-    browser-safe Apple Mail/default-mail compose route. A hosted PWA cannot
-    silently send or force attachments; it opens a draft with secure links.
-    """
-    provider = (provider or "outlook_app").lower()
-    mailto = _mailto_url(subject, body)
-    outlook = _outlook_app_url(subject, body)
-    if provider in {"outlook", "outlook_app", "outlook_native"}:
-        return {"primary": outlook, "fallback": mailto, "mobile": outlook, "outlook": outlook, "kind": "outlook_app"}
-    return {"primary": mailto, "fallback": mailto, "mobile": "", "outlook": outlook, "kind": "apple_mail"}
+def _build_email_url(provider: str, subject: str, body: str, to: str = "", cc: str = "") -> dict[str, str]:
+    provider = (provider or "outlook_web").lower()
+    mailto = _mailto_url(subject, body, to=to, cc=cc)
+    outlook = _outlook_web_url(subject, body, to=to, cc=cc)
+    sms = _sms_url(body)
+    if provider in {"apple", "apple_mail", "mail", "default"}:
+        return {"primary": mailto, "fallback": mailto, "kind": "apple_mail", "appleMailUrl": mailto, "outlookWebUrl": outlook, "smsUrl": sms}
+    if provider in {"messages", "message", "sms", "text", "imessage"}:
+        return {"primary": "", "fallback": mailto, "kind": "messages", "appleMailUrl": mailto, "outlookWebUrl": outlook, "smsUrl": sms}
+    return {"primary": outlook, "fallback": mailto, "kind": "outlook_web", "appleMailUrl": mailto, "outlookWebUrl": outlook, "smsUrl": sms}
 
 
 def _api(environ: dict[str, Any], start_response: Callable, path: str):
@@ -467,8 +689,8 @@ def _api(environ: dict[str, Any], start_response: Callable, path: str):
             period_lines = []
             for period in schedule.get("periods") or []:
                 label = period.get("label") or period.get("key") or "Phase"
-                start = period.get("displayStart") or ""
-                end = period.get("displayEnd") or ""
+                start_date = period.get("displayStart") or ""
+                end_date = period.get("displayEnd") or ""
                 metric = period.get("metric") or {}
                 metric_text = ""
                 if metric.get("type") == "weeks":
@@ -477,10 +699,13 @@ def _api(environ: dict[str, Any], start_response: Callable, path: str):
                     metric_text = f" ({metric.get('value', 0)} shoot days; {metric.get('skippedHolidays', 0)} holiday extension day(s))"
                 elif metric.get("type") == "date_range":
                     metric_text = " (single date range)"
-                period_lines.append(f"- {label}: {start} to {end}{metric_text}")
+                period_lines.append(f"- {label}: {start_date} to {end_date}{metric_text}")
+            for item in schedule.get("customRanges") or []:
+                note = f" — {item.get('note')}" if item.get("note") else ""
+                period_lines.append(f"- {item.get('label') or 'Manual override'}: {item.get('displayStart', '')} to {item.get('displayEnd', '')}{note}")
             coordinator_summary = str(payload.get("coordinatorSummary") or "").strip()
             if not coordinator_summary:
-                coordinator_summary = "Production periods use Monday-Friday workweeks. Production excludes weekends and extends for selected-location holidays."
+                coordinator_summary = "Production periods use Monday-Friday workweeks. Production excludes weekends and extends for selected-location holidays. Ready for Release defaults to the last Friday inside Print & Ship."
             body = (
                 "Producer Calendar exports are ready.\n\n"
                 f"Project: {schedule.get('projectTitle') or 'Feature Film'}\n"
@@ -493,28 +718,48 @@ def _api(environ: dict[str, Any], start_response: Callable, path: str):
                 + "\n\nDownload links:\n"
                 f"Excel: {excel_link}\n"
                 f"PDF: {pdf_link}\n\n"
-                "Links expire in 7 days. Attachments are not inserted by the browser email draft; download and attach the files if you want physical attachments.\n"
             )
-            email_urls = _build_email_url(payload.get("emailProvider") or "outlook_app", subject, body)
-            return _json_response(start_response, 200, {
+
+            provider = str(payload.get("emailProvider") or "outlook_web").lower()
+            to_addresses = _split_recipients(str(payload.get("emailTo") or ""))
+            cc_addresses = _split_recipients(str(payload.get("emailCc") or ""))
+            to_string = ";".join(to_addresses)
+            cc_string = ";".join(cc_addresses)
+
+            base_response = {
                 "ok": True,
+                "excel": {"filename": xlsx.name, "downloadUrl": f"/exports/{xlsx.name}", "shareUrl": excel_link},
+                "pdf": {"filename": result_pdf.name, "downloadUrl": f"/exports/{result_pdf.name}", "shareUrl": pdf_link},
+            }
+
+            body += "Links expire in 7 days. If you need physical attachments, download the Excel/PDF files and attach them manually.\n"
+            email_urls = _build_email_url(provider, subject, body, to=to_string, cc=cc_string)
+            provider_label = {
+                "outlook_web": "Outlook Web draft",
+                "apple_mail": "Apple Mail draft",
+                "messages": "Messages / text share",
+            }.get(email_urls.get("kind"), "Share draft")
+            base_response.update({
+                "sent": False,
                 "provider": email_urls.get("kind"),
                 "emailUrl": email_urls.get("primary"),
                 "fallbackEmailUrl": email_urls.get("fallback"),
                 "emailLaunchMode": email_urls.get("kind"),
                 "mailto": email_urls.get("fallback"),
-                "outlookMobileUrl": email_urls.get("mobile"),
-                "outlookAppUrl": email_urls.get("outlook"),
-                "appleMailUrl": email_urls.get("fallback"),
-                "excel": {"filename": xlsx.name, "downloadUrl": f"/exports/{xlsx.name}", "shareUrl": excel_link},
-                "pdf": {"filename": result_pdf.name, "downloadUrl": f"/exports/{result_pdf.name}", "shareUrl": pdf_link},
-                "message": "Exports created. The email draft includes direct Excel and PDF download links.",
+                "appleMailUrl": email_urls.get("appleMailUrl") or email_urls.get("fallback"),
+                "outlookWebUrl": email_urls.get("outlookWebUrl"),
+                "smsUrl": email_urls.get("smsUrl"),
+                "shareTitle": subject,
+                "shareText": body,
+                "to": to_addresses,
+                "cc": cc_addresses,
+                "message": f"Exports created. {provider_label} includes direct Excel and PDF download links.",
             })
+            return _json_response(start_response, 200, base_response)
 
         return _json_response(start_response, 404, {"ok": False, "error": "Not found"})
     except Exception as exc:
         return _json_response(start_response, 500, {"ok": False, "error": str(exc)})
-
 
 def application(environ: dict[str, Any], start_response: Callable):
     _cleanup_sessions()
@@ -526,6 +771,62 @@ def application(environ: dict[str, Any], start_response: Callable):
 
     if path.startswith("/static/"):
         return _serve_static(start_response, path)
+
+    if path == "/auth/microsoft/start" and method == "GET":
+        user = _current_user(environ)
+        if not user:
+            return _redirect(start_response, "/login")
+        if not _microsoft_is_configured():
+            return _response(start_response, 500, b"Microsoft 365 email is not configured on the server. Add MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_TENANT_ID, and MICROSOFT_REDIRECT_URI in Render.")
+        sess = _current_session(environ)
+        if not sess:
+            return _redirect(start_response, "/login")
+        state = secrets.token_urlsafe(24)
+        sess["microsoft_oauth_state"] = state
+        return _redirect(start_response, _microsoft_authorize_url(environ, state))
+
+    if path == "/auth/microsoft/callback" and method == "GET":
+        user = _current_user(environ)
+        if not user:
+            return _redirect(start_response, "/login")
+        sess = _current_session(environ)
+        qs = parse_qs(environ.get("QUERY_STRING") or "")
+        if not sess:
+            return _redirect(start_response, "/login")
+        if qs.get("error"):
+            msg = html.escape(qs.get("error_description", qs.get("error", ["Microsoft sign-in failed"])[0])[0])
+            return _response(start_response, 400, f"Microsoft sign-in failed: {msg}".encode("utf-8"))
+        returned_state = (qs.get("state", [""])[0] or "")
+        expected_state = str(sess.get("microsoft_oauth_state") or "")
+        if not returned_state or not expected_state or not hmac.compare_digest(returned_state, expected_state):
+            return _response(start_response, 400, b"Microsoft sign-in failed: invalid state.")
+        code = (qs.get("code", [""])[0] or "").strip()
+        if not code:
+            return _response(start_response, 400, b"Microsoft sign-in failed: missing authorization code.")
+        tokens = _exchange_microsoft_code(environ, code)
+        sess["microsoft_tokens"] = tokens
+        try:
+            sess["microsoft_user"] = _graph_me(tokens["access_token"])
+        except Exception:
+            sess["microsoft_user"] = {}
+        return _redirect(start_response, "/?microsoft=connected")
+
+    if path == "/auth/microsoft/status" and method == "GET":
+        sess = _current_session(environ)
+        connected = bool(sess and (sess.get("microsoft_tokens") or {}).get("access_token"))
+        return _json_response(start_response, 200, {
+            "configured": _microsoft_is_configured(),
+            "connected": connected,
+            "account": (sess or {}).get("microsoft_user") or {},
+            "authUrl": "/auth/microsoft/start",
+        })
+
+    if path == "/auth/microsoft/disconnect" and method == "POST":
+        sess = _current_session(environ)
+        if sess:
+            sess.pop("microsoft_tokens", None)
+            sess.pop("microsoft_user", None)
+        return _json_response(start_response, 200, {"ok": True})
 
     if path.startswith("/share/") and method == "GET":
         filename = Path(path[len("/share/"):]).name
@@ -583,12 +884,19 @@ def application(environ: dict[str, Any], start_response: Callable):
         return _response(start_response, 200, html_path.read_bytes(), "text/html")
 
     if path == "/api/info" and method == "GET":
+        sess = _current_session(environ) or {}
         return _json_response(start_response, 200, {
             "mode": "hosted",
             "appName": APP_NAME,
             "username": user,
             "message": "Hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.",
             "buildVersion": BUILD_VERSION,
+            "shareOptions": {
+                "outlookWeb": True,
+                "appleMail": True,
+                "messages": True,
+                "graphDisabledForPilot": True,
+            },
         })
 
     if path.startswith("/api/") and method == "POST":

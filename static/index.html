@@ -20,7 +20,7 @@
         <div class="brand-copy">
           <div class="eyebrow">Producer Calendar</div>
           <h1 id="pageTitle">Feature Film</h1>
-          <div class="subline"><span id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</span> <span id="buildBadge" class="build-badge">v2.4-direct-email-clients</span></div>
+          <div class="subline"><span id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</span> <span id="buildBadge" class="build-badge">v2.6-team-share-options</span></div>
         </div>
       </div>
 
@@ -37,8 +37,9 @@
         <label class="email-client-control top-email-client" title="Choose email client">
           <span>Email via</span>
           <select id="emailProviderTop" aria-label="Email client">
-            <option value="outlook_app">Outlook App</option>
-            <option value="apple_mail">Apple Mail</option>
+            <option value="outlook_web">Outlook Web Draft</option>
+            <option value="apple_mail">Apple Mail Draft</option>
+            <option value="messages">Messages / Text Links</option>
           </select>
         </label>
         <button id="emailBtn" class="button">Email</button>
@@ -94,10 +95,21 @@
 
             <label class="field full">Email client
               <select id="emailProvider">
-                <option value="outlook_app">Outlook App</option>
-                <option value="apple_mail">Apple Mail</option>
+                <option value="outlook_web">Outlook Web Draft</option>
+                <option value="apple_mail">Apple Mail Draft</option>
+                <option value="messages">Messages / Text Links</option>
               </select>
             </label>
+
+            <label class="field full">Email recipients
+              <input id="emailTo" type="text" placeholder="name@company.com; team@company.com" autocomplete="off">
+            </label>
+
+            <label class="field full optional-field">Cc
+              <input id="emailCc" type="text" placeholder="optional" autocomplete="off">
+            </label>
+
+            <div id="shareStatus" class="email-status">Share options use Outlook Web, Apple Mail, or Messages links.</div>
           </section>
 
           <section class="panel-card periods-card" id="scheduleInputsSection" aria-label="Production period inputs">
@@ -263,8 +275,9 @@
             <label class="email-client-control output-email-client">
               <span>Email via</span>
               <select id="emailProviderOutput" aria-label="Email client for export draft">
-                <option value="outlook_app">Outlook App</option>
-                <option value="apple_mail">Apple Mail</option>
+                <option value="outlook_web">Outlook Web Draft</option>
+                <option value="apple_mail">Apple Mail Draft</option>
+                <option value="messages">Messages / Text Links</option>
               </select>
             </label>
             <button type="button" class="button primary" data-mirror-action="email">Draft Email</button>

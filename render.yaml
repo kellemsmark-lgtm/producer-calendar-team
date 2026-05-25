@@ -15,3 +15,15 @@ services:
         value: andy.davis
       - key: CALENDAR_PASSWORD
         sync: false
+      - key: MICROSOFT_TENANT_ID
+        value: organizations
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_REDIRECT_URI
+        sync: false
+      - key: GRAPH_DEFAULT_RECIPIENTS
+        sync: false
+      - key: GRAPH_SEND_ATTACHMENTS
+        value: "true"
