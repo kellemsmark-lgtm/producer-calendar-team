@@ -3,6 +3,7 @@ const periodMeta = {
   pre: { label: 'Pre-Production', color: '#fff26b' },
   travel: { label: 'Travel/Prep', color: '#d2b48c' },
   production: { label: 'Production', color: '#5b9bd5' },
+  production_additional: { label: 'Production (Additional Photography)', color: '#5b9bd5' },
   hiatus: { label: 'Hiatus', color: '#e7a1c4' },
   post: { label: 'Post Production', color: '#e06666' },
   print_ship: { label: 'Print & Ship', color: '#70ad47' },
@@ -11,21 +12,21 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v1.9-dark-uniform-polish';
-const buildVersion = 'v1.9-dark-uniform-polish';
+const currentDefaultsVersion = 'v2.0-day-overrides-email-client';
+const buildVersion = 'v2.0-day-overrides-email-client';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
 let timer = null;
-let baselineScenario = null;
 let assistantStep = 0;
+let selectedDayRow = null;
 
 const defaults = {
   projectTitle: 'Feature Film',
   asOfDate: '',
   productionLocation: 'US',
   anchorMode: 'auto',
-  emailProvider: 'system',
+  emailProvider: 'apple_mail',
   lastEditedAnchor: 'production',
   periods: {
     rd: { start: '', weeks: 0 },
@@ -36,7 +37,8 @@ const defaults = {
     post: { start: '', weeks: 26 },
     print_ship: { start: '', weeks: 4 },
     ready: { date: '' }
-  }
+  },
+  customRanges: []
 };
 
 function $(id) { return document.getElementById(id); }
@@ -61,6 +63,8 @@ function migrateDefaultWeeks(state) {
     state.periods.pre = state.periods.pre || {};
     state.periods.post = state.periods.post || {};
     state.periods.print_ship = state.periods.print_ship || {};
+    if (!Array.isArray(state.customRanges)) state.customRanges = [];
+    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail') state.emailProvider = 'apple_mail';
 
     if (state.periods.pre.weeks === undefined || state.periods.pre.weeks === '' || Number(state.periods.pre.weeks) <= 0 || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
     if (state.periods.post.weeks === undefined || state.periods.post.weeks === '' || Number(state.periods.post.weeks) <= 0 || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
@@ -189,8 +193,35 @@ function buildCoordinatorSummary() {
   if (lastSchedule.anchorLabel) parts.push(`Anchor: ${lastSchedule.anchorLabel}.`);
   if (production) parts.push(`Production: ${production.displayStart} to ${production.displayEnd}, ${production.metric?.value || 0} shoot days, ${production.metric?.skippedHolidays || 0} holiday extension day(s).`);
   if (ready.displayDate) parts.push(`Ready for Release: ${ready.displayDate}.`);
+  const custom = (lastSchedule.customRanges || []);
+  if (custom.length) parts.push(`Manual day overrides: ${custom.map(r => `${r.label}: ${r.displayStart} to ${r.displayEnd}`).join('; ')}.`);
   for (const note of lastSchedule.notes || []) parts.push(note);
   return parts.join(' ');
+}
+
+
+function emailProviderControls() {
+  return ['emailProvider', 'emailProviderTop', 'emailProviderOutput'].map(id => $(id)).filter(Boolean);
+}
+
+function normalizeEmailProvider(value) {
+  const v = String(value || '').toLowerCase();
+  if (v.includes('outlook') || v.includes('office') || v === 'outlook') return 'outlook';
+  return 'apple_mail';
+}
+
+function getEmailProviderValue() {
+  return normalizeEmailProvider(($('emailProviderTop') || $('emailProvider') || {}).value || 'apple_mail');
+}
+
+function setEmailProviderValue(value) {
+  const normalized = normalizeEmailProvider(value);
+  for (const control of emailProviderControls()) control.value = normalized;
+}
+
+function syncEmailProviderFrom(source) {
+  setEmailProviderValue(source.value);
+  updateAndCalculate();
 }
 
 function payloadFromForm() {
@@ -200,7 +231,7 @@ function payloadFromForm() {
     asOfDate: $('asOfDate').value,
     productionLocation: $('productionLocation').value || 'US',
     anchorMode: $('anchorMode').value || 'auto',
-    emailProvider: $('emailProvider').value || 'system',
+    emailProvider: getEmailProviderValue(),
     coordinatorSummary: buildCoordinatorSummary(),
     lastEditedAnchor: loadState().lastEditedAnchor || 'production',
     periods: {
@@ -212,7 +243,8 @@ function payloadFromForm() {
       post: { start: $('postStart').value, weeks: durationOrDefault('postWeeks', 26) },
       print_ship: { start: $('printShipStart').value, weeks: durationOrDefault('printShipWeeks', 4) },
       ready: { date: $('readyDate').value }
-    }
+    },
+    customRanges: loadCustomRanges()
   };
 }
 
@@ -221,7 +253,7 @@ function setFormFromState(s) {
   $('asOfDate').value = s.asOfDate || '';
   $('productionLocation').value = s.productionLocation || 'US';
   $('anchorMode').value = s.anchorMode || 'auto';
-  $('emailProvider').value = s.emailProvider || 'system';
+  setEmailProviderValue(s.emailProvider || 'apple_mail');
   $('rdStart').value = s.periods.rd.start || '';
   $('rdWeeks').value = s.periods.rd.weeks ?? 0;
   $('preStart').value = s.periods.pre.start || '';
@@ -282,13 +314,17 @@ function renderSchedule(data) {
   $('calendarTitle').textContent = `${projectTitle} Calendar`;
   $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays extend Production. Phases use Monday-Friday workweeks and hand off on the following Monday by default.`;
   renderMessages(data);
-  renderReasoning(data);
   renderYearChips(data);
   renderStats(data);
   renderPhaseLegend(data);
   renderSummary(data);
+  renderCustomRangeList(data);
   renderCalendar(data, activeYear);
   renderHolidayList(data, activeYear);
+  if (selectedDayRow?.date) {
+    const updated = (data.dayRows || []).find(r => r.date === selectedDayRow.date);
+    if (updated) renderDayDetail(updated);
+  }
 }
 
 function renderMessages(data) {
@@ -405,7 +441,7 @@ function displayKeyForDay(keys, holidays) {
   // selected-location holidays override Production color.
   if (keys.includes('hiatus')) return 'hiatus';
   if (keys.includes('production') && (holidays || []).length) return 'hiatus';
-  const priority = ['print_ship', 'post', 'production', 'travel', 'pre', 'rd'];
+  const priority = ['production_additional', 'print_ship', 'post', 'production', 'travel', 'pre', 'rd'];
   return priority.find(key => keys.includes(key)) || keys[keys.length - 1];
 }
 
@@ -469,6 +505,7 @@ function renderHolidayList(data, year) {
 
 function renderDayDetail(row) {
   if (!row) return;
+  selectedDayRow = row;
   setMode('form', false);
   const tags = [];
   for (const key of row.periodKeys || []) {
@@ -478,10 +515,129 @@ function renderDayDetail(row) {
   }
   for (const h of row.holidayNames || []) tags.push(`<span class="tag" style="background:#d9ead3">${escapeHtml(h)}</span>`);
   if (row.ready) tags.push(`<span class="tag" style="background:#000;color:#fff">Ready for Release</span>`);
-  $('dayDetail').innerHTML = `<div class="detail-date">${escapeHtml(row.displayDate)}</div>
+  const customForDay = (lastSchedule?.customRanges || []).filter(r => r.start <= row.date && row.date <= r.end);
+  const selectedDisplay = row.displayDate || isoToDisplay(row.date);
+  $('dayDetail').innerHTML = `<div class="detail-date">${escapeHtml(selectedDisplay)}</div>
     <div>${escapeHtml(row.weekday || '')}</div>
     <div class="detail-tags">${tags.join('') || '<span class="tag">No period/holiday</span>'}</div>
-    ${row.periodKeys?.includes('production') ? `<p><b>Production workday:</b> ${row.isProductionWorkday ? 'Yes' : 'No'}</p>` : ''}`;
+    ${row.periodKeys?.includes('production') || row.periodKeys?.includes('production_additional') ? `<p><b>Production workday:</b> ${row.isProductionWorkday ? 'Yes' : 'No'}</p>` : ''}
+    <form id="dayOverrideForm" class="day-override-form">
+      <div class="day-override-title">Change this day or range</div>
+      <p class="hint">Use this for reshoots, additional photography, special travel/prep windows, or temporary phase changes. These are overlays; downstream Post continues unless you edit the main phase dates.</p>
+      <div class="field-row">
+        <label class="field">Start date <input id="overrideStart" type="text" inputmode="numeric" value="${escapeHtml(selectedDisplay)}"></label>
+        <label class="field">End date <input id="overrideEnd" type="text" inputmode="numeric" value="${escapeHtml(selectedDisplay)}"></label>
+      </div>
+      <label class="field full">Change to period
+        <select id="overridePeriod">
+          <option value="production_additional">Production (Additional Photography)</option>
+          <option value="production">Production</option>
+          <option value="pre">Pre-Production</option>
+          <option value="travel">Travel/Prep</option>
+          <option value="post">Post Production</option>
+          <option value="print_ship">Print & Ship</option>
+          <option value="hiatus">Hiatus</option>
+          <option value="rd">R&D</option>
+        </select>
+      </label>
+      <label class="field full">Note <input id="overrideNote" type="text" placeholder="Additional photography / reshoot / special unit" autocomplete="off"></label>
+      <div class="override-actions">
+        <button id="applyOverrideBtn" type="button" class="button primary compact-button">Apply Range</button>
+        <button id="clearOverridesForDayBtn" type="button" class="button soft compact-button">Clear Overrides for Day</button>
+      </div>
+    </form>
+    ${customForDay.length ? `<div class="override-current"><strong>Manual override on this date</strong>${customForDay.map(r => `<div>${escapeHtml(r.label)}: ${escapeHtml(r.displayStart)} - ${escapeHtml(r.displayEnd)}${r.note ? ` · ${escapeHtml(r.note)}` : ''}</div>`).join('')}</div>` : ''}`;
+  $('applyOverrideBtn')?.addEventListener('click', applyDayOverrideFromInspector);
+  $('clearOverridesForDayBtn')?.addEventListener('click', () => clearOverridesForDate(row.date));
+}
+
+function isoToDisplay(isoDate) {
+  if (!isoDate) return '';
+  const [y, m, d] = String(isoDate).split('-');
+  if (!y || !m || !d) return isoDate;
+  return `${m}/${d}/${String(y).slice(2)}`;
+}
+
+function displayToIso(value) {
+  const normalized = normalizeDateInput(value);
+  const parts = normalized.split('/');
+  if (parts.length !== 3) return '';
+  const mm = parts[0].padStart(2, '0');
+  const dd = parts[1].padStart(2, '0');
+  const yy = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+  if (!/^\d{4}$/.test(yy) || !/^\d{2}$/.test(mm) || !/^\d{2}$/.test(dd)) return '';
+  return `${yy}-${mm}-${dd}`;
+}
+
+function loadCustomRanges() {
+  const state = loadState();
+  return Array.isArray(state.customRanges) ? state.customRanges : [];
+}
+
+function saveCustomRanges(customRanges) {
+  const state = loadState();
+  state.customRanges = customRanges;
+  saveState(state);
+}
+
+function applyDayOverrideFromInspector() {
+  const startDisplay = normalizeDateInput($('overrideStart')?.value || '');
+  const endDisplay = normalizeDateInput($('overrideEnd')?.value || startDisplay);
+  const startIso = displayToIso(startDisplay);
+  const endIso = displayToIso(endDisplay || startDisplay);
+  if (!startIso || !endIso) return showTransient('Enter a valid override start and end date.', true);
+  const periodKey = $('overridePeriod')?.value || 'production_additional';
+  const meta = periodMeta[periodKey] || periodMeta.production_additional;
+  const note = ($('overrideNote')?.value || '').trim();
+  const customRanges = loadCustomRanges();
+  const item = {
+    id: `manual-${Date.now()}`,
+    start: startIso <= endIso ? startIso : endIso,
+    end: endIso >= startIso ? endIso : startIso,
+    displayStart: isoToDisplay(startIso <= endIso ? startIso : endIso),
+    displayEnd: isoToDisplay(endIso >= startIso ? endIso : startIso),
+    periodKey,
+    label: meta.label,
+    color: meta.color,
+    note,
+    source: 'day-inspector'
+  };
+  customRanges.push(item);
+  saveCustomRanges(customRanges);
+  showTransient(`Applied ${item.label} from ${item.displayStart} to ${item.displayEnd}.`);
+  updateAndCalculate();
+}
+
+function clearOverridesForDate(isoDate) {
+  if (!isoDate) return;
+  const before = loadCustomRanges();
+  const after = before.filter(r => !(r.start <= isoDate && isoDate <= r.end));
+  saveCustomRanges(after);
+  showTransient(before.length === after.length ? 'No manual overrides were found for that date.' : 'Cleared manual override(s) for the selected day.');
+  updateAndCalculate();
+}
+
+function removeCustomRange(id) {
+  saveCustomRanges(loadCustomRanges().filter(r => r.id !== id));
+  updateAndCalculate();
+}
+
+function renderCustomRangeList(data) {
+  const target = $('customRangeList');
+  if (!target) return;
+  const ranges = data?.customRanges || [];
+  if (!ranges.length) {
+    target.innerHTML = '<p class="hint">No manual day overrides yet. Select a calendar day to add additional photography, reshoots, or special phase ranges.</p>';
+    return;
+  }
+  target.innerHTML = ranges.map(r => `<div class="custom-range-row">
+    <span class="summary-swatch" style="background:${escapeHtml(r.color || '#5b9bd5')}"></span>
+    <div><strong>${escapeHtml(r.label)}</strong><span>${escapeHtml(r.displayStart)} - ${escapeHtml(r.displayEnd)}${r.note ? ` · ${escapeHtml(r.note)}` : ''}</span></div>
+    <button type="button" class="text-button" data-remove-custom-range="${escapeHtml(r.id || '')}">Remove</button>
+  </div>`).join('');
+  target.querySelectorAll('[data-remove-custom-range]').forEach(btn => {
+    btn.addEventListener('click', () => removeCustomRange(btn.dataset.removeCustomRange));
+  });
 }
 
 function toIso(year, month, day) {
@@ -572,8 +728,10 @@ function initTabs() {
 }
 
 function bindInputs() {
-  const ids = ['projectTitle', 'productionLocation', 'anchorMode', 'emailProvider', 'rdWeeks', 'preWeeks', 'travelWeeks', 'productionDays', 'postWeeks', 'printShipWeeks'];
+  const ids = ['projectTitle', 'productionLocation', 'anchorMode', 'rdWeeks', 'preWeeks', 'travelWeeks', 'productionDays', 'postWeeks', 'printShipWeeks'];
   for (const id of ids) $(id).addEventListener('input', updateAndCalculate);
+  emailProviderControls().forEach(control => control.addEventListener('change', () => syncEmailProviderFrom(control)));
+  emailProviderControls().forEach(control => control.addEventListener('input', () => syncEmailProviderFrom(control)));
   $('asOfDate').addEventListener('change', () => { $('asOfDate').value = normalizeDateInput($('asOfDate').value); updateAndCalculate(); });
   $('asOfDate').addEventListener('blur', () => { $('asOfDate').value = normalizeDateInput($('asOfDate').value); updateAndCalculate(); });
   for (const el of document.querySelectorAll('[data-date-period]')) {
@@ -607,10 +765,6 @@ function bindInputs() {
       if (action === 'email') $('emailBtn').click();
     });
   });
-  const capture = $('captureScenarioBtn');
-  if (capture) capture.addEventListener('click', captureScenario);
-  const compare = $('compareScenarioBtn');
-  if (compare) compare.addEventListener('click', compareScenario);
   initModes();
   initAssistant();
   $('resetBtn').addEventListener('click', () => {
@@ -687,7 +841,7 @@ const assistantQuestions = [
   { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
   { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
   { key: 'readyDate', prompt: 'What is the Ready for Release date? Use mm/dd/yy if known.', field: 'readyDate', normalize: true },
-  { key: 'emailProvider', prompt: 'Which email provider should the draft use: system default, Outlook, or Gmail?', field: 'emailProvider', map: mapEmailAnswer }
+  { key: 'emailProvider', prompt: 'Which email client should the draft use: Apple Mail or Outlook?', field: 'emailProvider', map: mapEmailAnswer }
 ];
 
 function initAssistant() {
@@ -783,7 +937,8 @@ function applyAssistantAnswer(q, answer) {
   if (q.normalize) value = normalizeDateInput(extractDates(answer)[0] || answer);
   if (q.map) value = q.map(answer);
   if (value !== undefined && value !== null && value !== '') {
-    $(q.field).value = value;
+    if (q.field === 'emailProvider') setEmailProviderValue(value);
+    else $(q.field).value = value;
     if (q.field === 'productionStart') markAnchor('production');
     if (q.field === 'readyDate') markAnchor('ready');
     assistantAdd('callout', `Captured ${fieldLabel(q.field)}: ${$(q.field).tagName === 'SELECT' ? $(q.field).selectedOptions[0].textContent : value}`);
@@ -826,9 +981,8 @@ function mapAnchorAnswer(answer) {
 
 function mapEmailAnswer(answer) {
   const a = answer.toLowerCase();
-  if (a.includes('gmail')) return 'gmail';
   if (a.includes('outlook') || a.includes('office') || a.includes('365')) return 'outlook';
-  return 'system';
+  return 'apple_mail';
 }
 
 function fieldLabel(field) {

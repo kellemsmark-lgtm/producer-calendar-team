@@ -388,7 +388,7 @@ def _prepare_year_sheet(ws: Worksheet, year: int) -> None:
     for col in ["AH", "AI"]:
         ws.column_dimensions[col].hidden = True
     # Hidden helper columns used by formulas/conditional formatting.
-    for col_idx in range(36, 45):  # AJ:AR
+    for col_idx in range(36, 51):  # AJ:AX
         ws.column_dimensions[get_column_letter(col_idx)].hidden = True
     ws.print_area = "A7:AG48"
     ws.page_setup.orientation = "landscape"
@@ -439,6 +439,31 @@ def _populate_local_helpers(ws: Worksheet, year: int, schedule: Dict[str, Any]) 
         ws[f"{HELPER_COLS['holiday_date']}{hrow}"].number_format = "m/d/yy"
         ws[f"{HELPER_COLS['holiday_name']}{hrow}"] = h.name
         hrow += 1
+
+    # Manual Day Inspector overrides, used for additional photography/reshoots
+    # or special phase overlays. These do not affect formulas for phase handoff;
+    # they only color the visible calendar and exports.
+    ws["AS1"] = "Override Used"
+    ws["AT1"] = "Override Start"
+    ws["AU1"] = "Override End"
+    ws["AV1"] = "Override Key"
+    ws["AW1"] = "Override Label"
+    ws["AX1"] = "Override Color"
+    crow = 2
+    for override in schedule.get("customRanges") or []:
+        start = parse_date(override.get("start"))
+        end = parse_date(override.get("end"))
+        if not start or not end:
+            continue
+        ws[f"AS{crow}"] = True
+        ws[f"AT{crow}"] = start
+        ws[f"AU{crow}"] = end
+        ws[f"AV{crow}"] = override.get("periodKey") or override.get("key") or "production_additional"
+        ws[f"AW{crow}"] = override.get("label") or "Production (Additional Photography)"
+        ws[f"AX{crow}"] = str(override.get("color") or "#5b9bd5").replace("#", "").upper()
+        ws[f"AT{crow}"].number_format = "m/d/yy"
+        ws[f"AU{crow}"].number_format = "m/d/yy"
+        crow += 1
 
 
 def _all_date_ranges() -> List[str]:
@@ -498,6 +523,19 @@ def _apply_calendar_conditional_formatting(ws: Worksheet) -> None:
         fill=PERIOD_COLORS["hiatus"],
         stop=True,
     )
+    # Manual day/range overrides from the Day Inspector. These sit above the
+    # standard phase bands, but below Ready and Hiatus/Holiday overrides.
+    for custom_row in range(2, 42):
+        custom_color = ws[f"AX{custom_row}"].value
+        if custom_color:
+            _add_cf(
+                ws,
+                [combined],
+                f'=AND(ISNUMBER(B13),WEEKDAY(B13,2)<=5,$AS${custom_row}=TRUE,$AT${custom_row}<>"",$AU${custom_row}<>"",B13>=$AT${custom_row},B13<=$AU${custom_row})',
+                fill=str(custom_color).replace("#", ""),
+                stop=True,
+            )
+
     # Period colors. Visual bands are weekday-only, matching the reference workbook.
     helper_rows = {"rd": 2, "pre": 3, "travel": 4, "production": 5, "hiatus": 6, "post": 7, "print_ship": 8}
     for key in ["rd", "pre", "travel", "production", "hiatus", "post", "print_ship"]:
@@ -714,9 +752,13 @@ def _populate_lower_box(ws: Worksheet, schedule: Dict[str, Any]) -> None:
             legend_items.append((key, PERIOD_LABELS[key]))
     if "production" in present:
         legend_items.append(("production", PERIOD_LABELS["production"]))
+        if schedule.get("customRanges"):
+            legend_items.append(("production_additional", "Additional Photography"))
         legend_items.append(("hiatus", "Holidays / Hiatus"))
     elif skipped or "hiatus" in present:
         legend_items.append(("hiatus", "Holidays / Hiatus"))
+    elif schedule.get("customRanges"):
+        legend_items.append(("production_additional", "Additional Photography"))
     for key in ["post", "print_ship"]:
         if key in present:
             legend_items.append((key, PERIOD_LABELS[key]))

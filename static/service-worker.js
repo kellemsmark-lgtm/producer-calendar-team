@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v1-9-dark-uniform-polish';
+const CACHE_NAME = 'producer-calendar-static-v2-0-day-overrides-email-client';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',

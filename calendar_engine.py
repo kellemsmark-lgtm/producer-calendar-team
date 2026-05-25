@@ -28,13 +28,14 @@ PERIOD_ORDER = [
 # The connected production chain should move from one active production phase
 # to the next following Monday.
 PHASE_CHAIN_ORDER = ["rd", "pre", "travel", "production", "post", "print_ship"]
-BUILD_VERSION = "v1.9-dark-uniform-polish"
+BUILD_VERSION = "v2.0-day-overrides-email-client"
 
 PERIOD_LABELS = {
     "rd": "R&D",
     "pre": "Pre-Production",
     "travel": "Travel/Prep",
     "production": "Production",
+    "production_additional": "Production (Additional Photography)",
     "hiatus": "Hiatus",
     "post": "Post Production",
     "print_ship": "Print & Ship",
@@ -48,6 +49,7 @@ PERIOD_COLORS = {
     "pre": "FFF26B",         # yellow
     "travel": "D2B48C",      # tan for Travel/Prep
     "production": "5B9BD5",  # blue
+    "production_additional": "5B9BD5",  # blue overlay for reshoots / additional photography
     "hiatus": "E7A1C4",      # pink
     "post": "E06666",        # red
     "print_ship": "70AD47",  # green
@@ -486,6 +488,51 @@ def _ready_date(periods: Dict[str, Dict[str, Any]]) -> Optional[date]:
     return parse_date(periods.get("ready", {}).get("date"))
 
 
+def _custom_ranges(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize manual day/range overrides from the Day Inspector.
+
+    These overlays are intentionally not part of the scheduling handoff chain.
+    They allow cases like additional photography during Post without moving Post.
+    """
+    raw = payload.get("customRanges") or payload.get("manualOverrides") or []
+    if not isinstance(raw, list):
+        return []
+    valid_keys = set(PERIOD_LABELS)
+    out: List[Dict[str, Any]] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        start = parse_date(item.get("start") or item.get("displayStart"))
+        end = parse_date(item.get("end") or item.get("displayEnd") or item.get("start") or item.get("displayStart"))
+        if not start or not end:
+            continue
+        if end < start:
+            start, end = end, start
+        key = str(item.get("periodKey") or item.get("key") or "production_additional").strip()
+        if key not in valid_keys or key == "ready":
+            key = "production_additional"
+        label = str(item.get("label") or PERIOD_LABELS.get(key) or key).strip()
+        color = str(item.get("color") or ("#" + PERIOD_COLORS.get(key, PERIOD_COLORS["production"]))).strip()
+        if color.startswith("#"):
+            color = color
+        else:
+            color = "#" + color.replace("#", "")
+        out.append({
+            "id": str(item.get("id") or f"manual-{idx+1}"),
+            "key": key,
+            "periodKey": key,
+            "label": label,
+            "start": iso(start),
+            "end": iso(end),
+            "displayStart": fmt(start),
+            "displayEnd": fmt(end),
+            "color": color,
+            "note": str(item.get("note") or "").strip(),
+            "source": "day-inspector",
+        })
+    return out
+
+
 def _determine_anchor(payload: Dict[str, Any], periods: Dict[str, Dict[str, Any]]) -> Optional[str]:
     mode = (payload.get("anchorMode") or payload.get("anchor") or "auto").strip()
     aliases = {"print": "print_ship", "printship": "print_ship", "ready_for_release": "ready"}
@@ -541,6 +588,9 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
     anchor = _determine_anchor(payload, periods)
     warnings: List[str] = []
     notes: List[str] = []
+    custom_ranges = _custom_ranges(payload)
+    if custom_ranges:
+        notes.append("Manual day overrides are shown as overlays and do not alter downstream schedule handoffs.")
 
     # Durations.
     week_defaults = {"rd": 0, "pre": 12, "travel": 0, "post": 26, "print_ship": 4}
@@ -681,6 +731,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
             "allHolidays": [h.as_json() for h in all_holidays_for_year(today.year)],
             "warnings": warnings,
             "notes": notes,
+            "customRanges": custom_ranges,
         }
 
     # Locate anchor date.
@@ -841,6 +892,12 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
             e = parse_date(rec["end"])
             if s and e and s <= cursor <= e and cursor.weekday() < 5:
                 active_periods.append(rec["key"])
+        for override in custom_ranges:
+            s = parse_date(override.get("start"))
+            e = parse_date(override.get("end"))
+            key_override = override.get("periodKey") or override.get("key")
+            if s and e and s <= cursor <= e and cursor.weekday() < 5 and key_override not in active_periods:
+                active_periods.append(key_override)
         is_ready = ready == cursor
         hlist = selected_hmap.get(cursor, [])
         rows.append({
@@ -851,11 +908,11 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
             "month": cursor.month,
             "day": cursor.day,
             "periodKeys": active_periods,
-            "periodLabels": [PERIOD_LABELS[k] for k in active_periods],
+            "periodLabels": [PERIOD_LABELS.get(k, k) for k in active_periods],
             "ready": is_ready,
             "holidayNames": [h.name for h in hlist],
             "holidayRegions": [h.region for h in hlist],
-            "isProductionWorkday": bool("production" in active_periods and is_valid_production_day(cursor, location, selected_hmap)),
+            "isProductionWorkday": bool(("production" in active_periods or "production_additional" in active_periods) and is_valid_production_day(cursor, location, selected_hmap)),
             "isWeekend": cursor.weekday() >= 5,
         })
         cursor += timedelta(days=1)
@@ -877,6 +934,7 @@ def calculate_schedule(payload: Dict[str, Any]) -> Dict[str, Any]:
         "dayRows": rows,
         "warnings": warnings,
         "notes": notes,
+        "customRanges": custom_ranges,
         "periodColors": PERIOD_COLORS,
         "holidayColors": HOLIDAY_COLORS,
         "locationLabels": LOCATION_LABELS,

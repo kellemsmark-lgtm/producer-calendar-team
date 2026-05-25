@@ -20,7 +20,7 @@
         <div class="brand-copy">
           <div class="eyebrow">Producer Calendar</div>
           <h1 id="pageTitle">Feature Film</h1>
-          <div class="subline"><span id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</span> <span id="buildBadge" class="build-badge">v1.9</span></div>
+          <div class="subline"><span id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</span> <span id="buildBadge" class="build-badge">v2.0</span></div>
         </div>
       </div>
 
@@ -34,6 +34,13 @@
         <button id="calculateBtn" class="button primary">Calculate</button>
         <button id="excelBtn" class="button">Excel</button>
         <button id="pdfBtn" class="button">PDF</button>
+        <label class="email-client-control top-email-client" title="Choose email client">
+          <span>Email via</span>
+          <select id="emailProviderTop" aria-label="Email client">
+            <option value="apple_mail">Apple Mail</option>
+            <option value="outlook">Outlook</option>
+          </select>
+        </label>
         <button id="emailBtn" class="button">Email</button>
         <button id="themeToggle" class="button icon-button" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">Dark</button>
         <a class="logout-link" href="/logout">Sign Out</a>
@@ -85,11 +92,10 @@
               </select>
             </label>
 
-            <label class="field full">Email provider
+            <label class="field full">Email client
               <select id="emailProvider">
-                <option value="system">System default</option>
-                <option value="outlook">Outlook Web / Microsoft 365</option>
-                <option value="gmail">Gmail Web</option>
+                <option value="apple_mail">Apple Mail</option>
+                <option value="outlook">Outlook</option>
               </select>
             </label>
           </section>
@@ -198,7 +204,6 @@
                 <p class="kicker">Summary</p>
                 <h2>Current scenario</h2>
               </div>
-              <button id="captureScenarioBtn" type="button" class="text-button">Capture A</button>
             </div>
             <div id="summary"></div>
           </section>
@@ -211,6 +216,15 @@
               </div>
             </div>
             <div id="dayDetail">Click any highlighted date to see period and holiday details.</div>
+            <div class="manual-overrides-block">
+              <div class="section-heading compact tiny-heading">
+                <div>
+                  <p class="kicker">Manual Overrides</p>
+                  <h2>Additional photography / special ranges</h2>
+                </div>
+              </div>
+              <div id="customRangeList"></div>
+            </div>
           </section>
         </div>
       </aside>
@@ -232,24 +246,7 @@
           <div id="phaseLegend" class="phase-legend" aria-label="Production color legend"></div>
         </div>
 
-        <section class="reasoning-card" aria-label="Schedule reasoning">
-          <div class="reasoning-heading">
-            <span>Reasoning</span>
-            <strong id="reasoningStatus">No changes yet</strong>
-          </div>
-          <div id="reasoningPanel" class="reasoning-list"></div>
-        </section>
 
-        <section class="scenario-panel" id="scenarioPanel" aria-label="Scenario comparison">
-          <div class="scenario-header">
-            <div>
-              <p class="kicker">Scenario Comparison</p>
-              <h2>Baseline vs current</h2>
-            </div>
-            <button type="button" class="button soft" id="compareScenarioBtn">Compare</button>
-          </div>
-          <div id="scenarioCompare" class="scenario-compare">Capture Scenario A from the left rail, then adjust inputs to compare.</div>
-        </section>
 
         <div id="calendarGrid" class="calendar-grid"></div>
         <div id="holidayList" class="holiday-list"></div>
@@ -263,6 +260,13 @@
           <div class="export-actions">
             <button type="button" class="button" data-mirror-action="excel">Export Excel</button>
             <button type="button" class="button" data-mirror-action="pdf">Export PDF</button>
+            <label class="email-client-control output-email-client">
+              <span>Email via</span>
+              <select id="emailProviderOutput" aria-label="Email client for export draft">
+                <option value="apple_mail">Apple Mail</option>
+                <option value="outlook">Outlook</option>
+              </select>
+            </label>
             <button type="button" class="button primary" data-mirror-action="email">Draft Email</button>
           </div>
         </section>

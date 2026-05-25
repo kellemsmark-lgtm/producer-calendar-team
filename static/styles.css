@@ -850,3 +850,106 @@ html[data-theme="dark"] .section-badge.muted {
 }
 html[data-theme="dark"] .text-button { color: #9acaff; }
 
+
+/* v2.0 functional polish: manual day overrides + explicit email client controls */
+.email-client-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 4px 8px 4px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(60,60,67,.16);
+  background: rgba(255,255,255,.72);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+.email-client-control select {
+  width: auto;
+  min-width: 104px;
+  min-height: 28px;
+  padding: 4px 24px 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  background: rgba(255,255,255,.92);
+}
+.output-email-client { margin-left: 2px; }
+.manual-overrides-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(60,60,67,.10);
+}
+.tiny-heading { margin-bottom: 8px; }
+.tiny-heading h2 { font-size: 13px; line-height: 1.2; }
+.day-override-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(60,60,67,.10);
+  background: rgba(255,255,255,.62);
+}
+.day-override-title {
+  font-size: 12px;
+  color: var(--ink);
+  font-weight: 850;
+  letter-spacing: -.01em;
+}
+.override-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.override-current {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 15px;
+  background: rgba(10,132,255,.08);
+  color: var(--ink-2);
+  border: 1px solid rgba(10,132,255,.16);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.override-current strong { display: block; margin-bottom: 3px; color: var(--ink); }
+.custom-range-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(60,60,67,.10);
+  background: rgba(255,255,255,.62);
+  font-size: 12px;
+}
+.custom-range-row strong { display: block; font-size: 12.5px; color: var(--ink); }
+.custom-range-row span:not(.summary-swatch) { display: block; color: var(--muted); line-height: 1.25; }
+.custom-range-row + .custom-range-row { margin-top: 6px; }
+
+/* Scenario comparison and reasoning were intentionally removed per producer workflow feedback. */
+.reasoning-card, .scenario-panel { display: none !important; }
+
+html[data-theme="dark"] .email-client-control,
+html[data-theme="dark"] .day-override-form,
+html[data-theme="dark"] .custom-range-row,
+html[data-theme="dark"] .override-current {
+  background: var(--dark-card);
+  border-color: var(--dark-line);
+  color: var(--ink-2);
+}
+html[data-theme="dark"] .email-client-control select {
+  background: rgba(29,29,32,.98);
+  border-color: var(--dark-line);
+  color: var(--ink);
+}
+html[data-theme="dark"] .manual-overrides-block { border-top-color: var(--dark-line); }
+html[data-theme="dark"] .day-override-title,
+html[data-theme="dark"] .override-current strong,
+html[data-theme="dark"] .custom-range-row strong { color: var(--ink); }
+
+@media (max-width: 760px) {
+  .email-client-control { width: 100%; justify-content: space-between; }
+  .email-client-control select { min-width: 140px; }
+  .custom-range-row { grid-template-columns: auto 1fr; }
+  .custom-range-row .text-button { grid-column: 2; justify-self: start; }
+}

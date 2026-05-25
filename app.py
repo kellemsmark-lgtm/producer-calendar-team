@@ -39,7 +39,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v1.9-dark-uniform-polish"
+BUILD_VERSION = "v2.0-day-overrides-email-client"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -401,6 +401,8 @@ def _build_email_url(provider: str, subject: str, body: str) -> str:
         return "https://mail.google.com/mail/?" + urlencode({"view": "cm", "fs": "1", "su": subject, "body": body}, quote_via=quote)
     if provider in {"outlook", "outlook_web", "office365"}:
         return "https://outlook.office.com/mail/deeplink/compose?" + urlencode(params, quote_via=quote)
+    # apple_mail and system both use the platform mailto handler. On iOS/macOS
+    # this opens Apple Mail when that is the selected/default client.
     return "mailto:?" + urlencode(params, quote_via=quote)
 
 

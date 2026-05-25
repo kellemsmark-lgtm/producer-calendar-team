@@ -152,7 +152,17 @@ def _fill_for_date(d: date, schedule: Dict[str, Any]) -> Tuple[Optional[str], st
     prod_holidays = _production_holiday_dates(schedule)
     if d in prod_holidays:
         return PERIOD_COLORS["hiatus"], "black"
-    for key in ["rd", "pre", "travel", "production", "hiatus", "post", "print_ship"]:
+    hiatus = recs.get("hiatus")
+    if hiatus and _date_in_period(d, hiatus):
+        return PERIOD_COLORS["hiatus"], "black"
+    for override in schedule.get("customRanges") or []:
+        start = _parse_iso(override.get("start"))
+        end = _parse_iso(override.get("end"))
+        if start and end and start <= d <= end:
+            key = override.get("periodKey") or override.get("key") or "production_additional"
+            color = str(override.get("color") or PERIOD_COLORS.get(key, PERIOD_COLORS["production"])).replace("#", "")
+            return color, "black"
+    for key in ["rd", "pre", "travel", "production", "post", "print_ship"]:
         rec = recs.get(key)
         if rec and _date_in_period(d, rec):
             return PERIOD_COLORS[key], "black"
