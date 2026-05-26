@@ -1,4 +1,4 @@
-const CACHE_NAME = 'producer-calendar-static-v1-3-defaults';
+const CACHE_NAME = 'producer-calendar-static-v2-7-login-hardening';
 const STATIC_ASSETS = [
   '/static/styles.css',
   '/static/app.js',
@@ -24,6 +24,16 @@ self.addEventListener('fetch', event => {
     return;
   }
   if (url.pathname.startsWith('/static/')) {
-    event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request)));
+    // Network first so UX-test changes reach iPhone/iPad Home Screen installs
+    // quickly. Cached assets are only a fallback for offline/poor-network use.
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' })
+        .then(response => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)).catch(() => undefined);
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
   }
 });

@@ -93,3 +93,56 @@ Email Draft now includes direct signed Excel/PDF download links in the message b
 ## v1.3 default period settings
 
 Default production-period values are now Pre-Production = 12 weeks, Post Production = 26 weeks, and Print & Ship = 4 weeks. Existing browser-saved values that match prior shipped defaults are migrated automatically.
+
+## v1.4 UX test build
+
+This package includes the Apple-quality UX refresh for testing before replacing the live production interface. Deploy it to a separate Render web service or a test branch first if you want to compare against the current hosted version.
+
+Core functionality is preserved: schedule calculation, Excel export, PDF export, email draft with download links, team login, and PWA/Home Screen support.
+
+## v1.7 Monday handoff update
+
+- Forward schedule handoffs now default to the following Monday after a phase ends.
+- If Production ends mid-week, Post Production begins on the next Monday by default.
+- A fixed Hiatus that begins later than the default handoff is shown as an overlay/interruption rather than creating a hidden gap that delays the next phase. Select Hiatus as the scheduling anchor if the hiatus range should drive the sequence.
+- The Assistant now explains the Monday-handoff assumption during guided intake.
+
+
+## v1.7 Force Default Durations
+
+Pre-Production, Post Production, and Print & Ship now force their production-planning defaults when old browser state supplies blank or zero values. This ensures Post Production begins on the following Monday after Production ends, even during Assistant intake, unless a user explicitly anchors a different phase.
+
+
+## v2.1 Ready Friday + Audit
+
+Ready for Release defaults to the last Friday inside Print & Ship. Static assets revalidate faster during UX testing.
+
+
+## v2.2 Outlook App Email
+
+The Outlook email option now attempts to open the installed Outlook app rather than Outlook Web. If the device/browser cannot open Outlook directly, the flow falls back to the system mail handler. For Mac desktop users who want Outlook, set Outlook as the default email reader in macOS. For iPhone/iPad users, set Outlook as the default email app in iOS/iPadOS Settings.
+
+
+## v2.4 direct email clients
+
+- Outlook App selection opens the native Outlook compose URL (`ms-outlook://compose`) instead of falling back to Apple Mail.
+- Apple Mail selection opens the Apple Mail/default compose route (`mailto:`).
+- The email draft includes secure Excel/PDF download links; browser-based drafts cannot attach generated files directly without Microsoft Graph or another mail API.
+
+
+### v2.4 Email Client Direct Fix
+
+- Outlook App selection now uses a native `ms-outlook://compose` draft link rather than `mailto:`.
+- Apple Mail selection uses the standard `mailto:` compose link.
+- After export links are generated, the app shows an Email Draft Ready sheet with direct Open Outlook App and Open Apple Mail buttons. This gives Safari/Chrome a direct user gesture for app switching, which is more reliable than launching custom app schemes after an asynchronous export call.
+- The hosted web/PWA app still opens a prefilled draft; it cannot silently send a message without user confirmation or attach local files directly. The draft includes secure Excel/PDF links.
+
+## v2.6 Team Share Options
+
+For the pre-InfoSec team pilot, the app supports three share methods without Microsoft Graph/admin consent:
+
+- Outlook Web Draft: opens Outlook on the web compose with the schedule summary and secure Excel/PDF links.
+- Apple Mail Draft: uses the device mail compose handler through `mailto:`.
+- Messages / Text Links: uses the Web Share API when available, with Messages/SMS and copy fallback.
+
+Generated files are shared as signed links that expire after 7 days. Physical email attachments still require manual download/attach unless a later Microsoft Graph-approved production path is enabled.

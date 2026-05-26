@@ -3,6 +3,7 @@ const periodMeta = {
   pre: { label: 'Pre-Production', color: '#fff26b' },
   travel: { label: 'Travel/Prep', color: '#d2b48c' },
   production: { label: 'Production', color: '#5b9bd5' },
+  production_additional: { label: 'Production (Additional Photography)', color: '#5b9bd5' },
   hiatus: { label: 'Hiatus', color: '#e7a1c4' },
   post: { label: 'Post Production', color: '#e06666' },
   print_ship: { label: 'Print & Ship', color: '#70ad47' },
@@ -11,17 +12,23 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v1.3-production-period-defaults';
+const currentDefaultsVersion = 'v2.8-no-json-login-crash';
+const buildVersion = 'v2.8-no-json-login-crash';
+const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
 let timer = null;
+let assistantStep = 0;
+let selectedDayRow = null;
 
 const defaults = {
   projectTitle: 'Feature Film',
   asOfDate: '',
   productionLocation: 'US',
   anchorMode: 'auto',
-  emailProvider: 'system',
+  emailProvider: 'outlook_web',
+  emailTo: '',
+  emailCc: '',
   lastEditedAnchor: 'production',
   periods: {
     rd: { start: '', weeks: 0 },
@@ -32,7 +39,8 @@ const defaults = {
     post: { start: '', weeks: 26 },
     print_ship: { start: '', weeks: 4 },
     ready: { date: '' }
-  }
+  },
+  customRanges: []
 };
 
 function $(id) { return document.getElementById(id); }
@@ -48,18 +56,21 @@ function loadState() {
 }
 
 function migrateDefaultWeeks(state) {
-  // v1.3 default update: Pre-Production 12 weeks, Post Production 26 weeks, Print & Ship 4 weeks.
-  // Preserve custom user-entered values, but upgrade prior shipped defaults from older builds.
+  // v1.7 production-planning defaults: these phases are core schedule assumptions.
+  // Force prior blank/zero saved values back to defaults so old browser state cannot
+  // suppress Post Production or Print & Ship during Assistant intake.
   try {
     if (localStorage.getItem(defaultsVersionKey) === currentDefaultsVersion) return state;
     state.periods = state.periods || {};
     state.periods.pre = state.periods.pre || {};
     state.periods.post = state.periods.post || {};
     state.periods.print_ship = state.periods.print_ship || {};
+    if (!Array.isArray(state.customRanges)) state.customRanges = [];
+    if (!state.emailProvider || state.emailProvider === 'system' || state.emailProvider === 'gmail' || state.emailProvider === 'outlook_web' || state.emailProvider === 'office365' || state.emailProvider === 'outlook_app') state.emailProvider = 'outlook_web';
 
-    if (state.periods.pre.weeks === undefined || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
-    if (state.periods.post.weeks === undefined || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
-    if (state.periods.print_ship.weeks === undefined || Number(state.periods.print_ship.weeks) === 2) state.periods.print_ship.weeks = 4;
+    if (state.periods.pre.weeks === undefined || state.periods.pre.weeks === '' || Number(state.periods.pre.weeks) <= 0 || Number(state.periods.pre.weeks) === 8) state.periods.pre.weeks = 12;
+    if (state.periods.post.weeks === undefined || state.periods.post.weeks === '' || Number(state.periods.post.weeks) <= 0 || Number(state.periods.post.weeks) === 12) state.periods.post.weeks = 26;
+    if (state.periods.print_ship.weeks === undefined || state.periods.print_ship.weeks === '' || Number(state.periods.print_ship.weeks) <= 0 || Number(state.periods.print_ship.weeks) === 2) state.periods.print_ship.weeks = 4;
 
     localStorage.setItem(defaultsVersionKey, currentDefaultsVersion);
     localStorage.setItem(stateKey, JSON.stringify(state));
@@ -84,6 +95,30 @@ function deepMerge(target, source) {
   return target;
 }
 
+function valueOrDefault(value, fallback) {
+  return value === undefined || value === null || value === '' ? fallback : value;
+}
+
+function valueOrPositiveDefault(value, fallback) {
+  const n = Number(value);
+  return value === undefined || value === null || value === '' || !Number.isFinite(n) || n <= 0 ? fallback : value;
+}
+
+function durationOrDefault(id, fallback) {
+  const value = $(id)?.value;
+  const n = Number(value);
+  return !Number.isFinite(n) || n <= 0 ? fallback : n;
+}
+
+function ensureTimelineDefaultsInForm() {
+  // Keep professional defaults available during Assistant intake before the
+  // coordinator asks every duration question. A user can still override these
+  // in Form mode, including setting 0 deliberately.
+  if ($('preWeeks') && (String($('preWeeks').value).trim() === '' || Number($('preWeeks').value) <= 0)) $('preWeeks').value = '12';
+  if ($('postWeeks') && (String($('postWeeks').value).trim() === '' || Number($('postWeeks').value) <= 0)) $('postWeeks').value = '26';
+  if ($('printShipWeeks') && (String($('printShipWeeks').value).trim() === '' || Number($('printShipWeeks').value) <= 0)) $('printShipWeeks').value = '4';
+}
+
 function normalizeDateInput(value) {
   value = (value || '').trim();
   if (!value) return '';
@@ -93,24 +128,129 @@ function normalizeDateInput(value) {
   return value;
 }
 
+
+function preferredTheme() {
+  const stored = localStorage.getItem(themeKey);
+  if (stored === 'dark' || stored === 'light') return stored;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme) {
+  const normalized = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = normalized;
+  document.documentElement.style.colorScheme = normalized;
+  const meta = $('themeColorMeta');
+  if (meta) meta.setAttribute('content', normalized === 'dark' ? '#101014' : '#f6f4ef');
+  const toggle = $('themeToggle');
+  if (toggle) {
+    toggle.textContent = normalized === 'dark' ? 'Light' : 'Dark';
+    toggle.setAttribute('aria-label', normalized === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+  }
+}
+
+function initTheme() {
+  applyTheme(preferredTheme());
+  const toggle = $('themeToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      localStorage.setItem(themeKey, next);
+      applyTheme(next);
+    });
+  }
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+      if (!localStorage.getItem(themeKey)) applyTheme(preferredTheme());
+    });
+  }
+}
+
+function syncCalculatedStartsToForm(data) {
+  // Keep the form aligned with the calculated schedule. This makes the Monday
+  // handoff visible after Assistant intake, even if the user never manually
+  // opens the Post tab. Only blank fields are filled; explicit user-entered
+  // dates are left editable and unchanged.
+  const fieldFor = { rd: 'rdStart', pre: 'preStart', travel: 'travelStart', production: 'productionStart', post: 'postStart', print_ship: 'printShipStart' };
+  for (const period of data.periods || []) {
+    const fieldId = fieldFor[period.key];
+    if (!fieldId || !$(fieldId)) continue;
+    if (!String($(fieldId).value || '').trim() && period.displayStart) {
+      $(fieldId).value = period.displayStart;
+    }
+  }
+  const post = (data.periods || []).find(p => p.key === 'post');
+  if (post && $('postStart')) {
+    $('postStart').placeholder = post.displayStart || 'mm/dd/yy';
+  }
+  if (data.ready?.displayDate && $('readyDate') && !String($('readyDate').value || '').trim()) {
+    $('readyDate').placeholder = data.ready.displayDate;
+  }
+}
+
+function buildCoordinatorSummary() {
+  if (!lastSchedule) return '';
+  const production = (lastSchedule.periods || []).find(p => p.key === 'production');
+  const ready = lastSchedule.ready || {};
+  const parts = [];
+  if (lastSchedule.anchorLabel) parts.push(`Anchor: ${lastSchedule.anchorLabel}.`);
+  if (production) parts.push(`Production: ${production.displayStart} to ${production.displayEnd}, ${production.metric?.value || 0} shoot days, ${production.metric?.skippedHolidays || 0} holiday extension day(s).`);
+  if (ready.displayDate) parts.push(`Ready for Release: ${ready.displayDate}.`);
+  const custom = (lastSchedule.customRanges || []);
+  if (custom.length) parts.push(`Manual day overrides: ${custom.map(r => `${r.label}: ${r.displayStart} to ${r.displayEnd}`).join('; ')}.`);
+  for (const note of lastSchedule.notes || []) parts.push(note);
+  return parts.join(' ');
+}
+
+
+function emailProviderControls() {
+  return ['emailProvider', 'emailProviderTop', 'emailProviderOutput'].map(id => $(id)).filter(Boolean);
+}
+
+function normalizeEmailProvider(value) {
+  const v = String(value || '').toLowerCase();
+  if (v.includes('apple') || v === 'mail' || v === 'default') return 'apple_mail';
+  if (v.includes('message') || v.includes('text') || v.includes('sms') || v.includes('imessage')) return 'messages';
+  if (v.includes('outlook') || v.includes('office') || v.includes('365') || v.includes('microsoft') || v.includes('web')) return 'outlook_web';
+  return 'outlook_web';
+}
+
+function getEmailProviderValue() {
+  return normalizeEmailProvider(($('emailProviderTop') || $('emailProvider') || {}).value || 'outlook_web');
+}
+
+function setEmailProviderValue(value) {
+  const normalized = normalizeEmailProvider(value);
+  for (const control of emailProviderControls()) control.value = normalized;
+}
+
+function syncEmailProviderFrom(source) {
+  setEmailProviderValue(source.value);
+  updateAndCalculate();
+}
+
 function payloadFromForm() {
+  ensureTimelineDefaultsInForm();
   return {
     projectTitle: $('projectTitle').value || 'Feature Film',
     asOfDate: $('asOfDate').value,
     productionLocation: $('productionLocation').value || 'US',
     anchorMode: $('anchorMode').value || 'auto',
-    emailProvider: $('emailProvider').value || 'system',
+    emailProvider: getEmailProviderValue(),
+    emailTo: $('emailTo') ? $('emailTo').value : '',
+    emailCc: $('emailCc') ? $('emailCc').value : '',
+    coordinatorSummary: buildCoordinatorSummary(),
     lastEditedAnchor: loadState().lastEditedAnchor || 'production',
     periods: {
       rd: { start: $('rdStart').value, weeks: Number($('rdWeeks').value || 0) },
-      pre: { start: $('preStart').value, weeks: Number($('preWeeks').value || 0) },
+      pre: { start: $('preStart').value, weeks: durationOrDefault('preWeeks', 12) },
       travel: { start: $('travelStart').value, weeks: Number($('travelWeeks').value || 0) },
       production: { start: $('productionStart').value, days: Number($('productionDays').value || 0) },
       hiatus: { start: $('hiatusStart').value, end: $('hiatusEnd').value },
-      post: { start: $('postStart').value, weeks: Number($('postWeeks').value || 0) },
-      print_ship: { start: $('printShipStart').value, weeks: Number($('printShipWeeks').value || 0) },
+      post: { start: $('postStart').value, weeks: durationOrDefault('postWeeks', 26) },
+      print_ship: { start: $('printShipStart').value, weeks: durationOrDefault('printShipWeeks', 4) },
       ready: { date: $('readyDate').value }
-    }
+    },
+    customRanges: loadCustomRanges()
   };
 }
 
@@ -119,11 +259,13 @@ function setFormFromState(s) {
   $('asOfDate').value = s.asOfDate || '';
   $('productionLocation').value = s.productionLocation || 'US';
   $('anchorMode').value = s.anchorMode || 'auto';
-  $('emailProvider').value = s.emailProvider || 'system';
+  setEmailProviderValue(s.emailProvider || 'outlook_web');
+  if ($('emailTo')) $('emailTo').value = s.emailTo || '';
+  if ($('emailCc')) $('emailCc').value = s.emailCc || '';
   $('rdStart').value = s.periods.rd.start || '';
   $('rdWeeks').value = s.periods.rd.weeks ?? 0;
   $('preStart').value = s.periods.pre.start || '';
-  $('preWeeks').value = s.periods.pre.weeks ?? 12;
+  $('preWeeks').value = valueOrPositiveDefault(s.periods.pre.weeks, 12);
   $('travelStart').value = s.periods.travel.start || '';
   $('travelWeeks').value = s.periods.travel.weeks ?? 0;
   $('productionStart').value = s.periods.production.start || '';
@@ -131,9 +273,9 @@ function setFormFromState(s) {
   $('hiatusStart').value = s.periods.hiatus.start || '';
   $('hiatusEnd').value = s.periods.hiatus.end || '';
   $('postStart').value = s.periods.post.start || '';
-  $('postWeeks').value = s.periods.post.weeks ?? 26;
+  $('postWeeks').value = valueOrPositiveDefault(s.periods.post.weeks, 26);
   $('printShipStart').value = s.periods.print_ship.start || '';
-  $('printShipWeeks').value = s.periods.print_ship.weeks ?? 4;
+  $('printShipWeeks').value = valueOrPositiveDefault(s.periods.print_ship.weeks, 4);
   $('readyDate').value = s.periods.ready.date || '';
 }
 
@@ -173,17 +315,24 @@ function setBusy(busy) {
 }
 
 function renderSchedule(data) {
+  syncCalculatedStartsToForm(data);
+  if ($('buildBadge')) $('buildBadge').textContent = data.buildVersion || buildVersion;
   const projectTitle = data.projectTitle || 'Feature Film';
   $('pageTitle').textContent = projectTitle;
   $('calendarTitle').textContent = `${projectTitle} Calendar`;
-  $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays extend Production. All phases use Monday-Friday workweeks.`;
+  $('calendarSubtitle').textContent = `${data.productionLocationLabel || 'United States'} holidays extend Production. Phases use Monday-Friday workweeks and hand off on the following Monday by default.`;
   renderMessages(data);
   renderYearChips(data);
   renderStats(data);
   renderPhaseLegend(data);
   renderSummary(data);
+  renderCustomRangeList(data);
   renderCalendar(data, activeYear);
   renderHolidayList(data, activeYear);
+  if (selectedDayRow?.date) {
+    const updated = (data.dayRows || []).find(r => r.date === selectedDayRow.date);
+    if (updated) renderDayDetail(updated);
+  }
 }
 
 function renderMessages(data) {
@@ -193,6 +342,7 @@ function renderMessages(data) {
   for (const n of data.notes || []) messages.push(`<div class="message note">${escapeHtml(n)}</div>`);
   $('messages').innerHTML = messages.join('');
 }
+
 
 function renderYearChips(data) {
   const years = data.years || [new Date().getFullYear()];
@@ -212,7 +362,7 @@ function renderStats(data) {
   const years = (data.years || []).join(' - ') || '—';
   const shootDays = production?.metric?.value ?? Number($('productionDays').value || 0);
   const holidayExt = production?.metric?.skippedHolidays ?? 0;
-  const postWeeks = post?.metric?.value ?? Number($('postWeeks').value || 0);
+  const postWeeks = post?.metric?.value ?? durationOrDefault('postWeeks', 26);
   const cards = [
     ['Ready', ready.displayDate || 'Not set', 'Release milestone'],
     ['Shoot days', shootDays ? `${shootDays}` : '0', `${holidayExt} holiday extension day${holidayExt === 1 ? '' : 's'}`],
@@ -276,6 +426,16 @@ function renderCalendar(data, year) {
   });
 }
 
+function displayKeyForDay(keys, holidays) {
+  // Priority is visual, not chronological: Ready > Hiatus/Holiday override > phase color.
+  // Hiatus remains visible as an interruption even when it overlays Post, and
+  // selected-location holidays override Production color.
+  if (keys.includes('hiatus')) return 'hiatus';
+  if (keys.includes('production') && (holidays || []).length) return 'hiatus';
+  const priority = ['production_additional', 'print_ship', 'post', 'production', 'travel', 'pre', 'rd'];
+  return priority.find(key => keys.includes(key)) || keys[keys.length - 1];
+}
+
 function renderMonth(year, monthIndex, rowsByDate) {
   const monthName = new Date(year, monthIndex, 1).toLocaleString(undefined, { month: 'long' });
   const first = new Date(year, monthIndex, 1);
@@ -294,18 +454,19 @@ function renderMonth(year, monthIndex, rowsByDate) {
     const productionNonWork = keys.includes('production') && !row.isProductionWorkday;
     let bg = '';
     let mini = '';
+    let displayKey = '';
     if (ready) {
       bg = '#000000';
       mini = 'READY';
     } else if (keys.length) {
-      const key = keys[keys.length - 1];
-      bg = periodMeta[key]?.color || '#fff';
+      displayKey = displayKeyForDay(keys, holidays);
+      bg = periodMeta[displayKey]?.color || '#fff';
       mini = keys.map(k => periodMeta[k]?.label || k).join(' / ');
     } else if (holidays.length) {
       bg = '#d9ead3';
       mini = holidays[0];
     }
-    const textColor = ready ? 'white' : (keys.length ? periodMeta[keys[keys.length - 1]]?.text : '');
+    const textColor = ready ? 'white' : (displayKey ? periodMeta[displayKey]?.text : '');
     const style = bg ? ` style="background:${bg};${textColor ? `color:${textColor};` : ''}"` : '';
     const aria = hasData ? `${row.displayDate || iso}: ${(row.periodLabels || []).concat(holidays).concat(ready ? ['Ready for Release'] : []).join(', ')}` : `${monthName} ${d}, ${year}`;
     cells += `<div class="day ${weekend ? 'weekend' : ''} ${hasData ? 'has-data' : ''} ${ready ? 'ready' : ''} ${productionNonWork ? 'production-nonwork' : ''}" data-date="${iso}" ${hasData ? 'role="button" tabindex="0"' : ''} aria-label="${escapeHtml(aria)}"${style}>
@@ -335,6 +496,8 @@ function renderHolidayList(data, year) {
 
 function renderDayDetail(row) {
   if (!row) return;
+  selectedDayRow = row;
+  setMode('form', false);
   const tags = [];
   for (const key of row.periodKeys || []) {
     const meta = periodMeta[key] || { color: '#eee', label: key };
@@ -343,10 +506,129 @@ function renderDayDetail(row) {
   }
   for (const h of row.holidayNames || []) tags.push(`<span class="tag" style="background:#d9ead3">${escapeHtml(h)}</span>`);
   if (row.ready) tags.push(`<span class="tag" style="background:#000;color:#fff">Ready for Release</span>`);
-  $('dayDetail').innerHTML = `<div class="detail-date">${escapeHtml(row.displayDate)}</div>
+  const customForDay = (lastSchedule?.customRanges || []).filter(r => r.start <= row.date && row.date <= r.end);
+  const selectedDisplay = row.displayDate || isoToDisplay(row.date);
+  $('dayDetail').innerHTML = `<div class="detail-date">${escapeHtml(selectedDisplay)}</div>
     <div>${escapeHtml(row.weekday || '')}</div>
     <div class="detail-tags">${tags.join('') || '<span class="tag">No period/holiday</span>'}</div>
-    ${row.periodKeys?.includes('production') ? `<p><b>Production workday:</b> ${row.isProductionWorkday ? 'Yes' : 'No'}</p>` : ''}`;
+    ${row.periodKeys?.includes('production') || row.periodKeys?.includes('production_additional') ? `<p><b>Production workday:</b> ${row.isProductionWorkday ? 'Yes' : 'No'}</p>` : ''}
+    <form id="dayOverrideForm" class="day-override-form">
+      <div class="day-override-title">Change this day or range</div>
+      <p class="hint">Use this for reshoots, additional photography, special travel/prep windows, or temporary phase changes. These are overlays; downstream Post continues unless you edit the main phase dates.</p>
+      <div class="field-row">
+        <label class="field">Start date <input id="overrideStart" type="text" inputmode="numeric" value="${escapeHtml(selectedDisplay)}"></label>
+        <label class="field">End date <input id="overrideEnd" type="text" inputmode="numeric" value="${escapeHtml(selectedDisplay)}"></label>
+      </div>
+      <label class="field full">Change to period
+        <select id="overridePeriod">
+          <option value="production_additional">Production (Additional Photography)</option>
+          <option value="production">Production</option>
+          <option value="pre">Pre-Production</option>
+          <option value="travel">Travel/Prep</option>
+          <option value="post">Post Production</option>
+          <option value="print_ship">Print & Ship</option>
+          <option value="hiatus">Hiatus</option>
+          <option value="rd">R&D</option>
+        </select>
+      </label>
+      <label class="field full">Note <input id="overrideNote" type="text" placeholder="Additional photography / reshoot / special unit" autocomplete="off"></label>
+      <div class="override-actions">
+        <button id="applyOverrideBtn" type="button" class="button primary compact-button">Apply Range</button>
+        <button id="clearOverridesForDayBtn" type="button" class="button soft compact-button">Clear Overrides for Day</button>
+      </div>
+    </form>
+    ${customForDay.length ? `<div class="override-current"><strong>Manual override on this date</strong>${customForDay.map(r => `<div>${escapeHtml(r.label)}: ${escapeHtml(r.displayStart)} - ${escapeHtml(r.displayEnd)}${r.note ? ` · ${escapeHtml(r.note)}` : ''}</div>`).join('')}</div>` : ''}`;
+  $('applyOverrideBtn')?.addEventListener('click', applyDayOverrideFromInspector);
+  $('clearOverridesForDayBtn')?.addEventListener('click', () => clearOverridesForDate(row.date));
+}
+
+function isoToDisplay(isoDate) {
+  if (!isoDate) return '';
+  const [y, m, d] = String(isoDate).split('-');
+  if (!y || !m || !d) return isoDate;
+  return `${m}/${d}/${String(y).slice(2)}`;
+}
+
+function displayToIso(value) {
+  const normalized = normalizeDateInput(value);
+  const parts = normalized.split('/');
+  if (parts.length !== 3) return '';
+  const mm = parts[0].padStart(2, '0');
+  const dd = parts[1].padStart(2, '0');
+  const yy = parts[2].length === 2 ? `20${parts[2]}` : parts[2];
+  if (!/^\d{4}$/.test(yy) || !/^\d{2}$/.test(mm) || !/^\d{2}$/.test(dd)) return '';
+  return `${yy}-${mm}-${dd}`;
+}
+
+function loadCustomRanges() {
+  const state = loadState();
+  return Array.isArray(state.customRanges) ? state.customRanges : [];
+}
+
+function saveCustomRanges(customRanges) {
+  const state = loadState();
+  state.customRanges = customRanges;
+  saveState(state);
+}
+
+function applyDayOverrideFromInspector() {
+  const startDisplay = normalizeDateInput($('overrideStart')?.value || '');
+  const endDisplay = normalizeDateInput($('overrideEnd')?.value || startDisplay);
+  const startIso = displayToIso(startDisplay);
+  const endIso = displayToIso(endDisplay || startDisplay);
+  if (!startIso || !endIso) return showTransient('Enter a valid override start and end date.', true);
+  const periodKey = $('overridePeriod')?.value || 'production_additional';
+  const meta = periodMeta[periodKey] || periodMeta.production_additional;
+  const note = ($('overrideNote')?.value || '').trim();
+  const customRanges = loadCustomRanges();
+  const item = {
+    id: `manual-${Date.now()}`,
+    start: startIso <= endIso ? startIso : endIso,
+    end: endIso >= startIso ? endIso : startIso,
+    displayStart: isoToDisplay(startIso <= endIso ? startIso : endIso),
+    displayEnd: isoToDisplay(endIso >= startIso ? endIso : startIso),
+    periodKey,
+    label: meta.label,
+    color: meta.color,
+    note,
+    source: 'day-inspector'
+  };
+  customRanges.push(item);
+  saveCustomRanges(customRanges);
+  showTransient(`Applied ${item.label} from ${item.displayStart} to ${item.displayEnd}.`);
+  updateAndCalculate();
+}
+
+function clearOverridesForDate(isoDate) {
+  if (!isoDate) return;
+  const before = loadCustomRanges();
+  const after = before.filter(r => !(r.start <= isoDate && isoDate <= r.end));
+  saveCustomRanges(after);
+  showTransient(before.length === after.length ? 'No manual overrides were found for that date.' : 'Cleared manual override(s) for the selected day.');
+  updateAndCalculate();
+}
+
+function removeCustomRange(id) {
+  saveCustomRanges(loadCustomRanges().filter(r => r.id !== id));
+  updateAndCalculate();
+}
+
+function renderCustomRangeList(data) {
+  const target = $('customRangeList');
+  if (!target) return;
+  const ranges = data?.customRanges || [];
+  if (!ranges.length) {
+    target.innerHTML = '<p class="hint">No manual day overrides yet. Select a calendar day to add additional photography, reshoots, or special phase ranges.</p>';
+    return;
+  }
+  target.innerHTML = ranges.map(r => `<div class="custom-range-row">
+    <span class="summary-swatch" style="background:${escapeHtml(r.color || '#5b9bd5')}"></span>
+    <div><strong>${escapeHtml(r.label)}</strong><span>${escapeHtml(r.displayStart)} - ${escapeHtml(r.displayEnd)}${r.note ? ` · ${escapeHtml(r.note)}` : ''}</span></div>
+    <button type="button" class="text-button" data-remove-custom-range="${escapeHtml(r.id || '')}">Remove</button>
+  </div>`).join('');
+  target.querySelectorAll('[data-remove-custom-range]').forEach(btn => {
+    btn.addEventListener('click', () => removeCustomRange(btn.dataset.removeCustomRange));
+  });
 }
 
 function toIso(year, month, day) {
@@ -391,6 +673,137 @@ async function exportFile(endpoint, expectedExt) {
   }
 }
 
+function isLikelyMobileAppleDevice() {
+  const ua = navigator.userAgent || '';
+  return /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function launchEmailClient(data) {
+  const provider = data.provider || getEmailProviderValue();
+  if (provider === 'messages') {
+    showMessageShareSheet(data);
+    showTransient(data.message || 'Exports created. Choose Messages from the share sheet or copy the links.');
+    return;
+  }
+  const outlookUrl = data.outlookWebUrl || data.emailUrl;
+  const appleMailUrl = data.appleMailUrl || data.mailto || data.fallbackEmailUrl;
+  showEmailClientSheet(data, provider, outlookUrl, appleMailUrl);
+  const autoUrl = provider === 'apple_mail' ? appleMailUrl : outlookUrl;
+  if (autoUrl) setTimeout(() => openExternalEmailUrl(autoUrl), 25);
+}
+
+function openExternalEmailUrl(url) {
+  if (!url) return;
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = url.startsWith('http') ? '_blank' : '_self';
+  link.rel = 'noreferrer noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function generatedLinksHtml(data) {
+  const excelUrl = data.excel?.shareUrl || data.excel?.downloadUrl || '';
+  const pdfUrl = data.pdf?.shareUrl || data.pdf?.downloadUrl || '';
+  return `
+    <div class="email-sheet-links" aria-label="Generated export links">
+      ${excelUrl ? `<a href="${escapeHtml(excelUrl)}" target="_blank" rel="noopener">Download Excel</a>` : ''}
+      ${pdfUrl ? `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener">Download PDF</a>` : ''}
+    </div>`;
+}
+
+async function shareScheduleText(data) {
+  const text = data.shareText || '';
+  const title = data.shareTitle || 'Producer Calendar exports';
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text });
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+  return false;
+}
+
+async function copyShareText(data) {
+  const text = data.shareText || '';
+  try {
+    await navigator.clipboard.writeText(text);
+    showTransient('Schedule links copied. Paste them into Messages, Teams, or email.');
+  } catch (err) {
+    showTransient('Could not copy automatically. Select and copy the message text from the sheet.', true);
+  }
+}
+
+function showMessageShareSheet(data) {
+  document.querySelectorAll('.email-launch-overlay').forEach(el => el.remove());
+  const smsUrl = data.smsUrl || '';
+  const shareText = data.shareText || '';
+  const overlay = document.createElement('div');
+  overlay.className = 'email-launch-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="email-launch-sheet wide">
+      <button type="button" class="email-sheet-close" aria-label="Close share sheet">×</button>
+      <p class="kicker">Messages share ready</p>
+      <h2>Send Excel and PDF links</h2>
+      <p class="email-sheet-copy">Use the system share sheet to choose Messages, or open Messages directly. The text includes secure Excel/PDF links that expire after 7 days.</p>
+      <div class="email-sheet-actions">
+        <button type="button" class="button primary" data-share-system>Share / Message</button>
+        ${smsUrl ? `<a class="button" href="${escapeHtml(smsUrl)}" data-sms-open>Open Messages</a>` : ''}
+        <button type="button" class="button" data-copy-share>Copy Text</button>
+      </div>
+      <textarea class="share-preview" readonly>${escapeHtml(shareText)}</textarea>
+      ${generatedLinksHtml(data)}
+      <p class="email-sheet-note">Text/iMessage cannot attach generated files from a hosted web app. This sends secure links to both outputs instead.</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay || event.target.closest('.email-sheet-close')) overlay.remove();
+    if (event.target.closest('[data-share-system]')) shareScheduleText(data);
+    if (event.target.closest('[data-copy-share]')) copyShareText(data);
+  });
+}
+
+function showEmailClientSheet(data, provider, outlookUrl, appleMailUrl) {
+  document.querySelectorAll('.email-launch-overlay').forEach(el => el.remove());
+  const isApple = provider === 'apple_mail';
+  const title = isApple ? 'Open Apple Mail' : 'Open Outlook Web';
+  const kicker = isApple ? 'Apple Mail draft ready' : 'Outlook Web draft ready';
+  const copy = isApple
+    ? 'The draft includes the schedule summary and secure Excel/PDF download links. If your browser does not switch apps automatically, use the button below.'
+    : 'Outlook Web will open a draft with the schedule summary and secure Excel/PDF download links. This avoids Microsoft Graph or admin consent during the pilot.';
+  const primaryUrl = isApple ? appleMailUrl : outlookUrl;
+  const overlay = document.createElement('div');
+  overlay.className = 'email-launch-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="email-launch-sheet">
+      <button type="button" class="email-sheet-close" aria-label="Close email launch sheet">×</button>
+      <p class="kicker">${escapeHtml(kicker)}</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p class="email-sheet-copy">${escapeHtml(copy)}</p>
+      <div class="email-sheet-actions">
+        <a class="button primary email-primary-launch" href="${escapeHtml(primaryUrl || '#')}" ${isApple ? '' : 'target="_blank" rel="noopener"'}>${escapeHtml(title)}</a>
+        ${!isApple && appleMailUrl ? `<a class="button" href="${escapeHtml(appleMailUrl)}">Open Apple Mail instead</a>` : ''}
+        ${isApple && outlookUrl ? `<a class="button" href="${escapeHtml(outlookUrl)}" target="_blank" rel="noopener">Open Outlook Web instead</a>` : ''}
+      </div>
+      ${generatedLinksHtml(data)}
+      <p class="email-sheet-note">Email drafts include secure links. Download and attach the files manually if physical attachments are required.</p>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay || event.target.closest('.email-sheet-close')) overlay.remove();
+  });
+  overlay.querySelectorAll('.email-primary-launch').forEach(link => {
+    link.addEventListener('click', () => setTimeout(() => overlay.remove(), 700));
+  });
+}
+
 async function emailDraft() {
   const payload = payloadFromForm();
   payload.lastEditedAnchor = loadState().lastEditedAnchor || 'production';
@@ -399,12 +812,20 @@ async function emailDraft() {
   try {
     const res = await fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await res.json();
-    if (!res.ok || data.ok === false) throw new Error(data.error || 'Email draft failed');
+    if (!res.ok || (data.ok === false && !data.authRequired)) throw new Error(data.error || 'Email failed');
     const links = [];
     if (data.excel?.shareUrl || data.excel?.downloadUrl) links.push(`<a href="${data.excel.shareUrl || data.excel.downloadUrl}" target="_blank" rel="noopener">Excel link</a>`);
     if (data.pdf?.shareUrl || data.pdf?.downloadUrl) links.push(`<a href="${data.pdf.shareUrl || data.pdf.downloadUrl}" target="_blank" rel="noopener">PDF link</a>`);
-    showTransient((data.message || 'Email draft created.') + (links.length ? ' ' + links.join(' | ') : ''));
-    if (data.emailUrl || data.mailto) window.location.href = data.emailUrl || data.mailto;
+    const providerValue = getEmailProviderValue();
+    const clientLabel = providerValue === 'outlook_web' ? 'Outlook Web' : providerValue === 'messages' ? 'Messages' : 'Apple Mail';
+    if (data.authRequired) {
+      showTransient(data.error || 'Email provider needs setup before sending.', true);
+    } else if (data.sent) {
+      showTransient(data.message || 'Email sent.');
+    } else {
+      showTransient((data.message || 'Email draft created.') + ` Opening ${clientLabel}.` + (links.length ? ' ' + links.join(' | ') : ''));
+    }
+    launchEmailClient(data);
   } catch (e) {
     showTransient(e.message, true);
   } finally {
@@ -437,8 +858,10 @@ function initTabs() {
 }
 
 function bindInputs() {
-  const ids = ['projectTitle', 'productionLocation', 'anchorMode', 'emailProvider', 'rdWeeks', 'preWeeks', 'travelWeeks', 'productionDays', 'postWeeks', 'printShipWeeks'];
+  const ids = ['projectTitle', 'productionLocation', 'anchorMode', 'emailTo', 'emailCc', 'rdWeeks', 'preWeeks', 'travelWeeks', 'productionDays', 'postWeeks', 'printShipWeeks'];
   for (const id of ids) $(id).addEventListener('input', updateAndCalculate);
+  emailProviderControls().forEach(control => control.addEventListener('change', () => syncEmailProviderFrom(control)));
+  emailProviderControls().forEach(control => control.addEventListener('input', () => syncEmailProviderFrom(control)));
   $('asOfDate').addEventListener('change', () => { $('asOfDate').value = normalizeDateInput($('asOfDate').value); updateAndCalculate(); });
   $('asOfDate').addEventListener('blur', () => { $('asOfDate').value = normalizeDateInput($('asOfDate').value); updateAndCalculate(); });
   for (const el of document.querySelectorAll('[data-date-period]')) {
@@ -464,14 +887,227 @@ function bindInputs() {
   $('pdfBtn').addEventListener('click', () => exportFile('/api/export/pdf', '.pdf'));
   $('emailBtn').addEventListener('click', emailDraft);
   $('saveBtn').addEventListener('click', () => { saveState(payloadFromForm()); showTransient('Saved locally in this browser.'); });
+  document.querySelectorAll('[data-mirror-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.mirrorAction;
+      if (action === 'excel') $('excelBtn').click();
+      if (action === 'pdf') $('pdfBtn').click();
+      if (action === 'email') $('emailBtn').click();
+    });
+  });
+  initModes();
+  initAssistant();
   $('resetBtn').addEventListener('click', () => {
     if (!confirm('Reset this calendar?')) return;
     localStorage.removeItem(stateKey);
     localStorage.removeItem('producerCalendarTeamHostedStateV1');
+    localStorage.removeItem(defaultsVersionKey);
     setFormFromState(structuredClone(defaults));
     activeYear = null;
     updateAndCalculate();
   });
+}
+
+
+function setMode(mode, scrollToPanel = true) {
+  document.body.classList.remove('mode-form', 'mode-assistant', 'mode-preview');
+  document.body.classList.add(`mode-${mode}`);
+  document.querySelectorAll('.mode-button').forEach(button => {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  if (scrollToPanel) {
+    const target = mode === 'assistant' ? $('aiAssistantSection') : mode === 'preview' ? document.querySelector('.calendar-panel') : $('projectSetupSection');
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function initModes() {
+  document.querySelectorAll('.mode-button').forEach(button => {
+    button.addEventListener('click', () => setMode(button.dataset.mode || 'form'));
+  });
+  setMode('form', false);
+}
+
+
+const assistantQuestions = [
+  { key: 'projectTitle', prompt: 'What is the project title?', field: 'projectTitle' },
+  { key: 'asOfDate', prompt: 'What as-of date should appear on the calendar? Use mm/dd/yy.', field: 'asOfDate', normalize: true },
+  { key: 'productionLocation', prompt: 'Where are we shooting for holiday rules: United States, New York, Canada, United Kingdom, or Mexico?', field: 'productionLocation', map: mapLocationAnswer },
+  { key: 'anchorMode', prompt: 'What is the scheduling anchor? I can work from Production start or Ready for Release.', field: 'anchorMode', map: mapAnchorAnswer },
+  { key: 'productionStart', prompt: 'What is the Production start date? Use mm/dd/yy. Type skip if you are anchoring by release.', field: 'productionStart', normalize: true, allowSkip: true },
+  { key: 'productionDays', prompt: 'How many Production shoot days? Default is 45. Weekends are excluded.', field: 'productionDays', number: true },
+  { key: 'preWeeks', prompt: 'How many weeks of Pre-Production? Default is 12.', field: 'preWeeks', number: true },
+  { key: 'hiatus', prompt: 'Any single hiatus range? Say none, or enter start and end dates like 12/20/26 to 01/02/27. The next phase still begins the Monday after the previous period; hiatus is shown as an overlay and does not suppress Post.', field: 'hiatus', hiatus: true },
+  { key: 'postWeeks', prompt: 'How many weeks of Post Production? Default is 26.', field: 'postWeeks', number: true },
+  { key: 'printShipWeeks', prompt: 'How many weeks for Print & Ship? Default is 4.', field: 'printShipWeeks', number: true },
+  { key: 'readyDate', prompt: 'Ready for Release defaults to the last Friday inside Print & Ship. Enter a release date only if you want to override it, or type skip.', field: 'readyDate', normalize: true, allowSkip: true },
+  { key: 'emailProvider', prompt: 'Which sharing method should be used? Outlook Web is the default; you can also say Apple Mail or Messages/text.', field: 'emailProvider', map: mapEmailAnswer }
+];
+
+function initAssistant() {
+  const send = $('assistantSend');
+  const input = $('assistantInput');
+  if (!send || !input) return;
+  assistantStep = 0;
+  assistantAdd('coordinator', 'I can guide intake without replacing the form. Answer in short phrases; I will populate the structured fields and keep everything editable. Phase handoffs default to the following Monday; Hiatus is an overlay, not a gate.');
+  assistantAdd('coordinator', assistantQuestions[assistantStep].prompt);
+  send.addEventListener('click', handleAssistantSend);
+  input.addEventListener('keydown', event => { if (event.key === 'Enter') handleAssistantSend(); });
+  document.querySelectorAll('[data-assistant-preset]').forEach(button => {
+    button.addEventListener('click', () => assistantPreset(button.dataset.assistantPreset));
+  });
+}
+
+function assistantAdd(type, text) {
+  const log = $('assistantLog');
+  if (!log) return;
+  const div = document.createElement('div');
+  div.className = `assistant-message ${type}`;
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function assistantPreset(kind) {
+  setMode('assistant', false);
+  if (kind === 'production') {
+    $('anchorMode').value = 'production';
+    assistantStep = 4;
+    assistantAdd('callout', 'Production-start scenario selected. I will prioritize production start, shoot days, and downstream delivery.');
+  } else if (kind === 'release') {
+    $('anchorMode').value = 'ready';
+    assistantStep = 10;
+    assistantAdd('callout', 'Release-backward scenario selected. I will use the release date as the anchor.');
+  } else {
+    explainCurrentSchedule();
+    return;
+  }
+  updateAndCalculate();
+  assistantAdd('coordinator', assistantQuestions[assistantStep].prompt);
+}
+
+function handleAssistantSend() {
+  const input = $('assistantInput');
+  const answer = (input.value || '').trim();
+  if (!answer) return;
+  input.value = '';
+  assistantAdd('user', answer);
+  const lower = answer.toLowerCase();
+  if (lower.includes('explain') || lower.includes('conflict') || lower.includes('why') || lower.includes('review')) {
+    explainCurrentSchedule();
+    return;
+  }
+  const q = assistantQuestions[assistantStep] || assistantQuestions[assistantQuestions.length - 1];
+  applyAssistantAnswer(q, answer);
+  assistantStep = Math.min(assistantStep + 1, assistantQuestions.length - 1);
+  updateAndCalculate();
+  const next = assistantQuestions[assistantStep];
+  if (assistantStep >= assistantQuestions.length - 1) {
+    assistantAdd('coordinator', 'I have the core scenario. Review the form fields, then Calculate, Export Excel, Export PDF, or Draft Email.');
+  } else {
+    assistantAdd('coordinator', next.prompt);
+  }
+}
+
+function applyAssistantAnswer(q, answer) {
+  if (!q || !q.field) return;
+  const lower = answer.toLowerCase();
+  if (q.allowSkip && /^(skip|none|no|n\/a)$/i.test(answer.trim())) {
+    assistantAdd('callout', 'Skipped. The field remains editable if you need to add it later.');
+    return;
+  }
+  if (q.hiatus) {
+    if (/^(none|no|skip|n\/a)$/i.test(answer.trim())) {
+      $('hiatusStart').value = '';
+      $('hiatusEnd').value = '';
+      assistantAdd('callout', 'No hiatus captured.');
+      return;
+    }
+    const dates = extractDates(answer);
+    if (dates[0]) $('hiatusStart').value = dates[0];
+    if (dates[1]) $('hiatusEnd').value = dates[1];
+    assistantAdd('callout', dates.length >= 2 ? `Captured hiatus ${dates[0]} to ${dates[1]}. Post will still begin on the Monday after Production by default; the hiatus will overlay that downstream schedule.` : 'I need two dates for hiatus; you can edit them in the form.');
+    return;
+  }
+  let value = answer;
+  if (q.number) {
+    const match = answer.match(/\d+/);
+    value = match ? match[0] : '';
+  }
+  if (q.normalize) value = normalizeDateInput(extractDates(answer)[0] || answer);
+  if (q.map) value = q.map(answer);
+  if (value !== undefined && value !== null && value !== '') {
+    if (q.field === 'emailProvider') setEmailProviderValue(value);
+    else $(q.field).value = value;
+    if (q.field === 'productionStart') markAnchor('production');
+    if (q.field === 'readyDate') markAnchor('ready');
+    assistantAdd('callout', `Captured ${fieldLabel(q.field)}: ${$(q.field).tagName === 'SELECT' ? $(q.field).selectedOptions[0].textContent : value}`);
+  } else {
+    assistantAdd('callout', 'I could not confidently capture that. The field remains editable in the form.');
+  }
+}
+
+function markAnchor(anchor) {
+  const s = loadState();
+  s.lastEditedAnchor = anchor;
+  saveState(s);
+}
+
+function extractDates(text) {
+  const matches = String(text).match(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b/g) || [];
+  return matches.map(normalizeDateInput);
+}
+
+function mapLocationAnswer(answer) {
+  const a = answer.toLowerCase();
+  if (a.includes('new york') || a === 'ny') return 'NY';
+  if (a.includes('canada') || a === 'ca') return 'CA';
+  if (a.includes('kingdom') || a.includes('uk') || a.includes('london')) return 'UK';
+  if (a.includes('mexico') || a === 'mx') return 'MX';
+  return 'US';
+}
+
+function mapAnchorAnswer(answer) {
+  const a = answer.toLowerCase();
+  if (a.includes('release') || a.includes('ready')) return 'ready';
+  if (a.includes('pre')) return 'pre';
+  if (a.includes('post')) return 'post';
+  if (a.includes('print')) return 'print_ship';
+  if (a.includes('travel')) return 'travel';
+  if (a.includes('hiatus')) return 'hiatus';
+  if (a.includes('r&d') || a.includes('research')) return 'rd';
+  return 'production';
+}
+
+function mapEmailAnswer(answer) {
+  const a = answer.toLowerCase();
+  if (a.includes('message') || a.includes('text') || a.includes('sms') || a.includes('imessage')) return 'messages';
+  if (a.includes('apple') || a.includes('mail')) return 'apple_mail';
+  return 'outlook_web';
+}
+
+function fieldLabel(field) {
+  const labels = {
+    projectTitle: 'project title', asOfDate: 'as-of date', productionLocation: 'location', anchorMode: 'anchor', productionStart: 'production start', productionDays: 'shoot days', preWeeks: 'pre-production weeks', postWeeks: 'post weeks', printShipWeeks: 'print & ship weeks', readyDate: 'ready date', emailProvider: 'email provider'
+  };
+  return labels[field] || field;
+}
+
+function explainCurrentSchedule() {
+  if (!lastSchedule) {
+    assistantAdd('coordinator', 'Calculate a schedule first, and I will explain the assumptions and conflicts.');
+    return;
+  }
+  const production = (lastSchedule.periods || []).find(p => p.key === 'production');
+  const holidayExt = production?.metric?.skippedHolidays || 0;
+  const pieces = [];
+  pieces.push(`Anchor: ${lastSchedule.anchorLabel || 'not set'}.`);
+  if (production) pieces.push(`Production runs ${production.displayStart} to ${production.displayEnd}; ${production.metric?.value || 0} shoot days, extended by ${holidayExt} holiday day${holidayExt === 1 ? '' : 's'}.`);
+  if (lastSchedule.ready?.displayDate) pieces.push(`Ready for Release: ${lastSchedule.ready.displayDate}.`);
+  if ((lastSchedule.warnings || []).length) pieces.push(`Needs review: ${lastSchedule.warnings.join(' ')}`);
+  assistantAdd('coordinator', pieces.join(' '));
 }
 
 async function loadServerInfo() {
@@ -479,13 +1115,21 @@ async function loadServerInfo() {
     const res = await fetch('/api/info');
     const data = await res.json();
     $('serverInfo').textContent = data.message || 'Secure hosted team app. Add this URL to the iPhone/iPad Home Screen from Safari.';
+    if ($('buildBadge')) $('buildBadge').textContent = data.buildVersion || buildVersion;
+    const status = $('shareStatus');
+    if (status) {
+      status.textContent = 'Share options use Outlook Web, Apple Mail, or Messages links. No Microsoft admin consent is required for this pilot.';
+      status.classList.remove('warn');
+    }
   } catch (e) {
     $('serverInfo').textContent = 'Secure hosted app is running.';
   }
 }
 
 function boot() {
+  initTheme();
   setFormFromState(loadState());
+  ensureTimelineDefaultsInForm();
   initTabs();
   bindInputs();
   loadServerInfo();

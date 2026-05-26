@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Producer Calendar">
-  <meta name="theme-color" content="#f5f6fb">
+  <meta name="theme-color" content="#f6f4ef" id="themeColorMeta">
   <title>Producer Calendar</title>
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
@@ -16,189 +16,273 @@
   <div class="app-frame">
     <header class="topbar" aria-label="Application header">
       <div class="brand-lockup">
-        <div class="app-icon" aria-hidden="true">
-          <span class="app-icon-grid"></span>
-        </div>
+        <div class="app-icon" aria-hidden="true"><span class="app-icon-grid"></span></div>
         <div class="brand-copy">
           <div class="eyebrow">Producer Calendar</div>
           <h1 id="pageTitle">Feature Film</h1>
-          <div class="subline" id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</div>
+          <div class="subline"><span id="serverInfo">Secure hosted app for Mac, iPhone, and iPad.</span> <span id="buildBadge" class="build-badge">v2.8-no-json-login-crash</span></div>
         </div>
       </div>
+
+      <nav class="mode-switch" aria-label="Work mode">
+        <button type="button" class="mode-button active" data-mode="form">Form</button>
+        <button type="button" class="mode-button" data-mode="assistant">Assistant</button>
+        <button type="button" class="mode-button" data-mode="preview">Preview</button>
+      </nav>
+
       <div class="top-actions" aria-label="Primary actions">
         <button id="calculateBtn" class="button primary">Calculate</button>
         <button id="excelBtn" class="button">Excel</button>
         <button id="pdfBtn" class="button">PDF</button>
+        <label class="email-client-control top-email-client" title="Choose email client">
+          <span>Email via</span>
+          <select id="emailProviderTop" aria-label="Email client">
+            <option value="outlook_web">Outlook Web Draft</option>
+            <option value="apple_mail">Apple Mail Draft</option>
+            <option value="messages">Messages / Text Links</option>
+          </select>
+        </label>
         <button id="emailBtn" class="button">Email</button>
+        <button id="themeToggle" class="button icon-button" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">Dark</button>
         <a class="logout-link" href="/logout">Sign Out</a>
       </div>
     </header>
 
     <main class="app-shell">
-      <aside class="side-panel" aria-label="Project inputs">
-        <section class="panel-card project-card">
-          <div class="section-heading">
-            <div>
-              <p class="kicker">Project Setup</p>
-              <h2>Build the schedule</h2>
+      <aside class="side-panel" aria-label="Schedule controls">
+        <div class="rail-scroller">
+          <section class="panel-card project-card" id="projectSetupSection">
+            <div class="section-heading">
+              <div>
+                <p class="kicker">Project Setup</p>
+                <h2>Set the operating frame</h2>
+              </div>
+              <span class="section-badge">Required</span>
             </div>
-          </div>
 
-          <label class="field full">Project title
-            <input id="projectTitle" type="text" placeholder="Feature Film" autocomplete="off">
-          </label>
-
-          <div class="field-row">
-            <label class="field">As of date
-              <input id="asOfDate" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off">
+            <label class="field full">Project title
+              <input id="projectTitle" type="text" placeholder="Feature Film" autocomplete="off">
             </label>
-            <label class="field">Location
-              <select id="productionLocation">
-                <option value="US">United States</option>
-                <option value="NY">New York</option>
-                <option value="CA">Canada</option>
-                <option value="UK">United Kingdom</option>
-                <option value="MX">Mexico</option>
+
+            <div class="field-row">
+              <label class="field">As of date
+                <input id="asOfDate" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off">
+              </label>
+              <label class="field">Location
+                <select id="productionLocation">
+                  <option value="US">United States</option>
+                  <option value="NY">New York</option>
+                  <option value="CA">Canada</option>
+                  <option value="UK">United Kingdom</option>
+                  <option value="MX">Mexico</option>
+                </select>
+              </label>
+            </div>
+
+            <label class="field full">Scheduling anchor
+              <select id="anchorMode">
+                <option value="auto">Auto - use last edited date</option>
+                <option value="rd">R&D start</option>
+                <option value="pre">Pre-Production start</option>
+                <option value="travel">Travel/Prep start</option>
+                <option value="production">Production start</option>
+                <option value="hiatus">Hiatus range</option>
+                <option value="post">Post Production start</option>
+                <option value="print_ship">Print & Ship start</option>
+                <option value="ready">Ready for Release date</option>
               </select>
             </label>
-          </div>
 
-          <label class="field full">Scheduling anchor
-            <select id="anchorMode">
-              <option value="auto">Auto - use last edited date</option>
-              <option value="rd">R&D start</option>
-              <option value="pre">Pre-Production start</option>
-              <option value="travel">Travel/Prep start</option>
-              <option value="production">Production start</option>
-              <option value="hiatus">Hiatus range</option>
-              <option value="post">Post Production start</option>
-              <option value="print_ship">Print & Ship start</option>
-              <option value="ready">Ready for Release date</option>
-            </select>
-          </label>
+            <label class="field full">Email client
+              <select id="emailProvider">
+                <option value="outlook_web">Outlook Web Draft</option>
+                <option value="apple_mail">Apple Mail Draft</option>
+                <option value="messages">Messages / Text Links</option>
+              </select>
+            </label>
 
-          <label class="field full">Email provider
-            <select id="emailProvider">
-              <option value="system">System default</option>
-              <option value="outlook">Outlook Web / Microsoft 365</option>
-              <option value="gmail">Gmail Web</option>
-            </select>
-          </label>
-        </section>
+            <label class="field full">Email recipients
+              <input id="emailTo" type="text" placeholder="name@company.com; team@company.com" autocomplete="off">
+            </label>
 
-        <section class="panel-card periods-card" aria-label="Production period inputs">
-          <div class="section-heading compact">
-            <div>
-              <p class="kicker">Timeline</p>
-              <h2>Production Inputs</h2>
-            </div>
-          </div>
+            <label class="field full optional-field">Cc
+              <input id="emailCc" type="text" placeholder="optional" autocomplete="off">
+            </label>
 
-          <div class="toolbar-tabs" id="toolbarTabs" role="tablist" aria-label="Production period tabs">
-            <button data-tab="rd" class="active" role="tab">R&D</button>
-            <button data-tab="pre" role="tab">Pre</button>
-            <button data-tab="travel" role="tab">Travel</button>
-            <button data-tab="production" role="tab">Production</button>
-            <button data-tab="hiatus" role="tab">Hiatus</button>
-            <button data-tab="post" role="tab">Post</button>
-            <button data-tab="print_ship" role="tab">Print & Ship</button>
-            <button data-tab="ready" role="tab">Release</button>
-          </div>
+            <div id="shareStatus" class="email-status">Share options use Outlook Web, Apple Mail, or Messages links.</div>
+          </section>
 
-          <div class="toolbar-content">
-            <div class="period-form active" data-form="rd" role="tabpanel">
-              <div class="period-header"><span class="period-color rd"></span><strong>R&D</strong></div>
-              <label class="field">Start date <input data-date-period="rd" id="rdStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <label class="field">Weeks <input id="rdWeeks" type="number" min="0" step="1"></label>
+          <section class="panel-card periods-card" id="scheduleInputsSection" aria-label="Production period inputs">
+            <div class="section-heading compact">
+              <div>
+                <p class="kicker">Schedule Inputs</p>
+                <h2>Timeline by phase</h2>
+              </div>
             </div>
 
-            <div class="period-form" data-form="pre" role="tabpanel">
-              <div class="period-header"><span class="period-color pre"></span><strong>Pre-Production</strong></div>
-              <label class="field">Start date <input data-date-period="pre" id="preStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <label class="field">Weeks <input id="preWeeks" type="number" min="0" step="1"></label>
+            <div class="phase-strip" id="toolbarTabs" role="tablist" aria-label="Production period tabs">
+              <button data-tab="rd" class="active" role="tab">R&D</button>
+              <button data-tab="pre" role="tab">Pre</button>
+              <button data-tab="travel" role="tab">Travel</button>
+              <button data-tab="production" role="tab">Production</button>
+              <button data-tab="hiatus" role="tab">Hiatus</button>
+              <button data-tab="post" role="tab">Post</button>
+              <button data-tab="print_ship" role="tab">Print</button>
+              <button data-tab="ready" role="tab">Release</button>
             </div>
 
-            <div class="period-form" data-form="travel" role="tabpanel">
-              <div class="period-header"><span class="period-color travel"></span><strong>Travel/Prep</strong></div>
-              <label class="field">Start date <input data-date-period="travel" id="travelStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <label class="field">Weeks <input id="travelWeeks" type="number" min="0" step="1"></label>
+            <div class="toolbar-content">
+              <div class="period-form active" data-form="rd" role="tabpanel">
+                <div class="period-header"><span class="period-color rd"></span><strong>R&D</strong><small>Optional</small></div>
+                <label class="field">Start date <input data-date-period="rd" id="rdStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <label class="field">Weeks <input id="rdWeeks" type="number" min="0" step="1"></label>
+              </div>
+
+              <div class="period-form" data-form="pre" role="tabpanel">
+                <div class="period-header"><span class="period-color pre"></span><strong>Pre-Production</strong><small>Default 12 weeks</small></div>
+                <label class="field">Start date <input data-date-period="pre" id="preStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <label class="field">Weeks <input id="preWeeks" type="number" min="0" step="1"></label>
+              </div>
+
+              <div class="period-form" data-form="travel" role="tabpanel">
+                <div class="period-header"><span class="period-color travel"></span><strong>Travel/Prep</strong><small>Optional</small></div>
+                <label class="field">Start date <input data-date-period="travel" id="travelStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <label class="field">Weeks <input id="travelWeeks" type="number" min="0" step="1"></label>
+              </div>
+
+              <div class="period-form" data-form="production" role="tabpanel">
+                <div class="period-header"><span class="period-color production"></span><strong>Production</strong><small>Workdays</small></div>
+                <label class="field">Start date <input data-date-period="production" id="productionStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <label class="field">Shoot days <input id="productionDays" type="number" min="0" step="1"></label>
+                <p class="hint">Weekdays only. Selected-location holidays automatically extend Production.</p>
+              </div>
+
+              <div class="period-form" data-form="hiatus" role="tabpanel">
+                <div class="period-header"><span class="period-color hiatus"></span><strong>Hiatus</strong><small>Single range</small></div>
+                <label class="field">Start date <input data-date-period="hiatus" id="hiatusStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <label class="field">End date <input data-date-period="hiatus" id="hiatusEnd" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <p class="hint">Leave blank if there is no hiatus.</p>
+              </div>
+
+              <div class="period-form" data-form="post" role="tabpanel">
+                <div class="period-header"><span class="period-color post"></span><strong>Post Production</strong><small>Default 26 weeks</small></div>
+                <label class="field">Start date <input data-date-period="post" id="postStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <label class="field">Weeks <input id="postWeeks" type="number" min="0" step="1"></label>
+              </div>
+
+              <div class="period-form" data-form="print_ship" role="tabpanel">
+                <div class="period-header"><span class="period-color print_ship"></span><strong>Print & Ship</strong><small>Default 4 weeks</small></div>
+                <label class="field">Start date <input data-date-period="print_ship" id="printShipStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <label class="field">Weeks <input id="printShipWeeks" type="number" min="0" step="1"></label>
+              </div>
+
+              <div class="period-form" data-form="ready" role="tabpanel">
+                <div class="period-header"><span class="period-color ready"></span><strong>Ready for Release</strong><small>Milestone</small></div>
+                <label class="field full">Release date <input data-date-period="ready" id="readyDate" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
+                <p class="hint">Optional milestone override. By default, Ready for Release is the last Friday inside Print & Ship.</p>
+              </div>
             </div>
 
-            <div class="period-form" data-form="production" role="tabpanel">
-              <div class="period-header"><span class="period-color production"></span><strong>Production</strong></div>
-              <label class="field">Start date <input data-date-period="production" id="productionStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <label class="field">Shoot days <input id="productionDays" type="number" min="0" step="1"></label>
-              <p class="hint">Weekdays only. Selected-location holidays automatically extend Production.</p>
+            <div class="toolbar-extra">
+              <button id="saveBtn" class="button soft">Save</button>
+              <button id="resetBtn" class="button soft danger">Reset</button>
             </div>
+          </section>
 
-            <div class="period-form" data-form="hiatus" role="tabpanel">
-              <div class="period-header"><span class="period-color hiatus"></span><strong>Hiatus</strong></div>
-              <label class="field">Start date <input data-date-period="hiatus" id="hiatusStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <label class="field">End date <input data-date-period="hiatus" id="hiatusEnd" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <p class="hint">Single date range. Leave blank for no hiatus.</p>
+          <section class="panel-card assistant-card" id="aiAssistantSection" aria-label="AI scheduling assistant">
+            <div class="section-heading compact">
+              <div>
+                <p class="kicker">AI Assistant</p>
+                <h2>Guided intake</h2>
+              </div>
+              <span class="section-badge muted">Optional</span>
             </div>
-
-            <div class="period-form" data-form="post" role="tabpanel">
-              <div class="period-header"><span class="period-color post"></span><strong>Post Production</strong></div>
-              <label class="field">Start date <input data-date-period="post" id="postStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <label class="field">Weeks <input id="postWeeks" type="number" min="0" step="1"></label>
+            <p class="assistant-intro">Use this when the meeting starts with rough assumptions. The coordinator captures answers into the same editable fields above.</p>
+            <div class="assistant-quick-actions" aria-label="Assistant starter prompts">
+              <button type="button" class="chip-button" data-assistant-preset="production">Start from Production</button>
+              <button type="button" class="chip-button" data-assistant-preset="release">Work back from Release</button>
+              <button type="button" class="chip-button" data-assistant-preset="review">Review conflicts</button>
             </div>
-
-            <div class="period-form" data-form="print_ship" role="tabpanel">
-              <div class="period-header"><span class="period-color print_ship"></span><strong>Print & Ship</strong></div>
-              <label class="field">Start date <input data-date-period="print_ship" id="printShipStart" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <label class="field">Weeks <input id="printShipWeeks" type="number" min="0" step="1"></label>
+            <div id="assistantLog" class="assistant-log" aria-live="polite"></div>
+            <div class="assistant-compose">
+              <input id="assistantInput" type="text" placeholder="Answer or ask about schedule logic..." autocomplete="off">
+              <button id="assistantSend" type="button" class="button primary compact-button">Send</button>
             </div>
+          </section>
 
-            <div class="period-form" data-form="ready" role="tabpanel">
-              <div class="period-header"><span class="period-color ready"></span><strong>Ready for Release</strong></div>
-              <label class="field full">Release date <input data-date-period="ready" id="readyDate" type="text" inputmode="numeric" placeholder="mm/dd/yy" autocomplete="off"></label>
-              <p class="hint">Single milestone date. The schedule can calculate backward from this anchor.</p>
+          <section class="panel-card summary-card" id="summarySection">
+            <div class="section-heading compact">
+              <div>
+                <p class="kicker">Summary</p>
+                <h2>Current scenario</h2>
+              </div>
             </div>
-          </div>
+            <div id="summary"></div>
+          </section>
 
-          <div class="toolbar-extra">
-            <button id="saveBtn" class="button soft">Save</button>
-            <button id="resetBtn" class="button soft danger">Reset</button>
-          </div>
-        </section>
-
-        <section class="panel-card summary-card">
-          <div class="section-heading compact">
-            <div>
-              <p class="kicker">Overview</p>
-              <h2>Schedule Summary</h2>
+          <section class="panel-card detail-card" id="dayInspectorSection">
+            <div class="section-heading compact">
+              <div>
+                <p class="kicker">Day Inspector</p>
+                <h2>Selected day</h2>
+              </div>
             </div>
-          </div>
-          <div id="summary"></div>
-        </section>
-
-        <section class="panel-card detail-card">
-          <div class="section-heading compact">
-            <div>
-              <p class="kicker">Inspector</p>
-              <h2>Selected Day</h2>
+            <div id="dayDetail">Click any highlighted date to see period and holiday details.</div>
+            <div class="manual-overrides-block">
+              <div class="section-heading compact tiny-heading">
+                <div>
+                  <p class="kicker">Manual Overrides</p>
+                  <h2>Additional photography / special ranges</h2>
+                </div>
+              </div>
+              <div id="customRangeList"></div>
             </div>
-          </div>
-          <div id="dayDetail">Click any highlighted date to see period and holiday details.</div>
-        </section>
+          </section>
+        </div>
       </aside>
 
       <section class="calendar-panel" aria-label="Calendar output preview">
         <div class="calendar-toolbar">
           <div>
-            <p class="kicker">Live Preview</p>
+            <p class="kicker">Live Schedule Preview</p>
             <h2 id="calendarTitle">Calendar</h2>
             <p id="calendarSubtitle">Production periods and selected-location holidays.</p>
           </div>
           <div id="yearChips" class="year-chips" aria-label="Calendar years"></div>
         </div>
 
-        <div id="statsGrid" class="stats-grid" aria-label="Schedule highlights"></div>
-        <div id="phaseLegend" class="phase-legend" aria-label="Production color legend"></div>
         <div id="messages" class="messages" aria-live="polite"></div>
+
+        <div class="preview-ledger">
+          <div id="statsGrid" class="stats-grid" aria-label="Schedule highlights"></div>
+          <div id="phaseLegend" class="phase-legend" aria-label="Production color legend"></div>
+        </div>
+
+
+
         <div id="calendarGrid" class="calendar-grid"></div>
         <div id="holidayList" class="holiday-list"></div>
+
+        <section class="export-panel" aria-label="Export and share">
+          <div>
+            <p class="kicker">Output</p>
+            <h2>Export for the meeting</h2>
+            <p>Uses the structured schedule, selected-location holiday logic, and any coordinator summary generated in this session.</p>
+          </div>
+          <div class="export-actions">
+            <button type="button" class="button" data-mirror-action="excel">Export Excel</button>
+            <button type="button" class="button" data-mirror-action="pdf">Export PDF</button>
+            <label class="email-client-control output-email-client">
+              <span>Email via</span>
+              <select id="emailProviderOutput" aria-label="Email client for export draft">
+                <option value="outlook_web">Outlook Web Draft</option>
+                <option value="apple_mail">Apple Mail Draft</option>
+                <option value="messages">Messages / Text Links</option>
+              </select>
+            </label>
+            <button type="button" class="button primary" data-mirror-action="email">Draft Email</button>
+          </div>
+        </section>
       </section>
     </main>
   </div>
