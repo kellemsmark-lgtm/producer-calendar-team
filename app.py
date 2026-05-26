@@ -41,7 +41,7 @@ EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/tmp/producer_calendar_exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 APP_NAME = os.environ.get("APP_NAME", "Producer Calendar")
-BUILD_VERSION = "v2.7-login-hardening"
+BUILD_VERSION = "v2.8-no-json-login-crash"
 SESSION_COOKIE = os.environ.get("SESSION_COOKIE_NAME", "pc_session")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(8 * 60 * 60)))
 SECURE_COOKIES = os.environ.get("SECURE_COOKIES", "true").lower() in {"1", "true", "yes", "on"}
@@ -197,10 +197,11 @@ def _load_users() -> tuple[dict[str, str], bool]:
 
     Production options, in priority order:
         CALENDAR_PASSWORD_HASHES_JSON='{"andy.davis":"pbkdf2_hash", ...}'
-        CALENDAR_USERS_JSON='{"andy.davis":"strong password","team.member":"another password"}'
         CALENDAR_USERS='andy.davis=strong password;team.member=another password'
+        CALENDAR_USERS_JSON='{"andy.davis":"strong password","team.member":"another password"}'
         CALENDAR_USERNAME / CALENDAR_PASSWORD
 
+    CALENDAR_USERS is preferred for Render because it avoids JSON quote issues.
     A malformed CALENDAR_USERS_JSON now logs a warning and falls back instead of
     crashing the Render worker.
     """
@@ -210,17 +211,19 @@ def _load_users() -> tuple[dict[str, str], bool]:
         if parsed_hashes:
             return {str(k): str(v) for k, v in parsed_hashes.items()}, False
 
-    users_json = os.environ.get("CALENDAR_USERS_JSON")
-    if users_json:
-        parsed_users = _parse_users_json(users_json, "CALENDAR_USERS_JSON")
-        if parsed_users:
-            return {username: _hash_password(password) for username, password in parsed_users.items()}, False
-
+    # Preferred human-friendly Render format. Put this before JSON so an old bad
+    # CALENDAR_USERS_JSON value cannot override a correct CALENDAR_USERS value.
     users_simple = os.environ.get("CALENDAR_USERS")
     if users_simple:
         parsed_simple = _parse_users_simple(users_simple)
         if parsed_simple:
             return {username: _hash_password(password) for username, password in parsed_simple.items()}, False
+
+    users_json = os.environ.get("CALENDAR_USERS_JSON")
+    if users_json:
+        parsed_users = _parse_users_json(users_json, "CALENDAR_USERS_JSON")
+        if parsed_users:
+            return {username: _hash_password(password) for username, password in parsed_users.items()}, False
 
     username = os.environ.get("CALENDAR_USERNAME")
     password = os.environ.get("CALENDAR_PASSWORD")

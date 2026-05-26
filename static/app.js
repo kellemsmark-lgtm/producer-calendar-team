@@ -12,8 +12,8 @@ const periodMeta = {
 
 const stateKey = 'producerCalendarTeamHostedStateV2';
 const defaultsVersionKey = 'producerCalendarDefaultVersion';
-const currentDefaultsVersion = 'v2.7-login-hardening';
-const buildVersion = 'v2.7-login-hardening';
+const currentDefaultsVersion = 'v2.8-no-json-login-crash';
+const buildVersion = 'v2.8-no-json-login-crash';
 const themeKey = 'producerCalendarThemePreference';
 let activeYear = null;
 let lastSchedule = null;
